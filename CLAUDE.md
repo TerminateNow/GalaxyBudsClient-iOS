@@ -83,11 +83,15 @@ so what compiles depends on where you build.
 iOS gives apps no RFCOMM access, so the port depends on a jailbreak (rootless/Dopamine) and has two native parts.
 Both are built on Linux or WSL2, without Xcode:
 
-- **`src/budsrfcomm.m`:** a command-line client and TCP↔RFCOMM bridge (`list`, `probe`, `serve`, `daemon`).
-  It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
-  - `daemon` runs from launchd (`launchd/com.galaxybudsclient.budsrfcomm.plist`, as `mobile`, loaded by `layout/DEBIAN/postinst`).
-  - It serves a line protocol on `127.0.0.1:8762`: `PING`, `LIST`, and `CONNECT <MAC> [ch]`, which answers `OK <ch>` and then passes raw bytes.
-    The protocol is documented in `ios/BudsBridge/README.md`. **This is the interface the iOS app's `IBluetoothService` must speak.**
+- **`src/budsrfcomm.m`:** a command-line client and TCP↔RFCOMM bridge (`list`, `probe [MAC] [-c ch]`, `serve [MAC] [-c ch] [-p port]`,
+  `config`, `forget`). It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
+  - **Background service:** `layout/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` runs `budsrfcomm serve` as `mobile`, on `127.0.0.1:8762` by default.
+    The package's `postinst` loads it and restarts `bluetoothd`. `prerm` unloads it, and `postrm` restarts `bluetoothd` on removal.
+  - **Settings:** the device, channel and port live in `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`.
+    `serve` rereads them on every client connection and saves the device and channel that worked.
+    Without a saved address, it uses the paired device whose name contains "Buds".
+  - **Runtime state:** `serve` never exits on Bluetooth errors. It recreates the `CBClassicManager` if it isn't powered on, because `bluetoothd` may restart.
+    Its log is `/var/jb/var/mobile/Library/Logs/budsrfcomm.log`, trimmed at 1 MB.
 - **`tweak/BudsBridge.m`:** an ElleKit tweak injected into `bluetoothd`. On iOS 15.8.8 the daemon's
   open/close-RFCOMM handlers are stubs. The tweak hooks them and opens the channel with `bluetoothd`'s internal
   `OI_RFCOMM_*` functions, then hands data to the client through a socketpair.
@@ -110,4 +114,6 @@ Rules that came out of on-device testing:
   bounces all work onto its own serial queue.
 
 Verified on device: an iPhone 7 on 15.8.8 talks to Galaxy Buds3 Pro on RFCOMM **channel 20**.
-The next planned step is an iOS app head (Avalonia.iOS) whose `IBluetoothService` connects to `budsrfcomm serve` on `127.0.0.1`.
+The 0.3.0 background service is built (`dist/`) but not yet tested on a device.
+Each cloud session starts without the SDK or `ldid`. Download them into the scratchpad first: `theos/sdks` (`iPhoneOS15.6.sdk`) and `ProcursusTeam/ldid` releases (`ldid_linux_x86_64`).
+The next planned step is an iOS app head (Avalonia.iOS) whose `IBluetoothService` connects to the service on `127.0.0.1:8762`.

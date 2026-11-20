@@ -4,11 +4,13 @@
 // CBRFCOMMChannel) that bluetoothd exposes to entitled clients. No bluetoothd hooks.
 //
 //   budsrfcomm list                          paired classic devices + Samsung SPP channels
-//   budsrfcomm probe <MAC> [opts]            open the SPP channel and hex-dump what the buds send
-//   budsrfcomm serve <MAC> [opts]            raw TCP <-> RFCOMM bridge for one device (manual testing)
-//   budsrfcomm daemon [-p port]              background bridge for the app (launchd), see PROTOCOL below
+//   budsrfcomm probe [MAC] [opts]            open the SPP channel and hex-dump what the buds send
+//   budsrfcomm serve [MAC] [opts]            TCP <-> RFCOMM bridge on 127.0.0.1 (for the app)
+//   budsrfcomm config [MAC] [-c ch] [-p port] show or set the remembered device/channel/port
+//   budsrfcomm forget                        clear the remembered settings
 //
-// Needs the BudsBridge tweak in bluetoothd on iOS 15.8.8 (bluetoothd stubs out RFCOMM opens otherwise).
+// The package installs a LaunchDaemon that runs `budsrfcomm serve` (no arguments) at boot.
+// The device, channel and port come from the config file, and whatever works is saved back to it.
 
 #import "PrivateCoreBluetooth.h"
 #include <arpa/inet.h>
@@ -17,14 +19,18 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
 #define BB_VERSION "0.3.0"
+#define BB_DEFAULT_PORT 8762
+// Same folder as the tweak's BudsBridge.disable switch. Owned by mobile (uid 501), which the daemon runs as.
+#define BB_CONFIG_PATH "/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist"
+#define BB_MOBILE_UID 501
 
 static const long long kManagerPoweredOn = 5;     // CBManagerStatePoweredOn
 static const long long kPeerConnected = 2;         // CBClassicPeer state "connected"
@@ -42,22 +48,20 @@ static NSArray<NSString *> *KnownUUIDs(void) {
 static BOOL gVerbose = NO;
 static BOOL gQuietFrames = NO;   // DecodeFrames: count only, no output
 static dispatch_queue_t gCBQueue;
+static volatile sig_atomic_t gStop = 0;   // SIGTERM/SIGINT: finish the session and exit
 
 #pragma mark - Logging / helpers
 
 static void BBLog(const char *fmt, ...) {
-    // Format into one buffer and write it once so lines from different client threads don't interleave.
-    char line[1024];
     struct timeval tv; gettimeofday(&tv, NULL);
     struct tm tm; localtime_r(&tv.tv_sec, &tm);
-    int n = snprintf(line, sizeof line, "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ", tm.tm_year + 1900, tm.tm_mon + 1,
-                     tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(tv.tv_usec / 1000));
-    va_list ap; va_start(ap, fmt);
-    n += vsnprintf(line + n, sizeof line - (size_t)n - 1, fmt, ap);
-    va_end(ap);
-    if (n > (int)sizeof line - 2) n = (int)sizeof line - 2;
-    line[n++] = '\n';
-    write(STDERR_FILENO, line, (size_t)n);
+    if (!isatty(STDERR_FILENO))   // log file of the background service: add the date
+        fprintf(stderr, "[%04d-%02d-%02d ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    else
+        fputc('[', stderr);
+    fprintf(stderr, "%02d:%02d:%02d.%03d] ", tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(tv.tv_usec / 1000));
+    va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+    fputc('\n', stderr);
 }
 
 static void HexDump(const char *prefix, const uint8_t *buf, size_t len) {
@@ -106,6 +110,50 @@ static NSData *ParseHex(const char *s) {
         else { uint8_t b = (uint8_t)(hi << 4 | v); [d appendBytes:&b length:1]; hi = -1; }
     }
     return hi < 0 ? d : nil;
+}
+
+#pragma mark - Remembered settings
+
+// Keys: Address (NSString, "AA:BB:..."), Channel (NSNumber), Port (NSNumber). All optional.
+static NSMutableDictionary *LoadConfig(void) {
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@BB_CONFIG_PATH];
+    return d ? [d mutableCopy] : [NSMutableDictionary dictionary];
+}
+
+static BOOL SaveConfig(NSDictionary *cfg) {
+    NSString *path = @BB_CONFIG_PATH;
+    [[NSFileManager defaultManager] createDirectoryAtPath:path.stringByDeletingLastPathComponent
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+    NSError *err = nil;
+    if (![cfg writeToURL:[NSURL fileURLWithPath:path] error:&err]) {
+        BBLog("cannot save %s: %s", path.UTF8String, err.localizedDescription.UTF8String ?: "?");
+        return NO;
+    }
+    // run with sudo: hand the file back to mobile, or the service could no longer update it
+    if (geteuid() == 0) chown(path.fileSystemRepresentation, BB_MOBILE_UID, BB_MOBILE_UID);
+    return YES;
+}
+
+static NSString *ConfigAddress(NSDictionary *cfg) {
+    id a = cfg[@"Address"];
+    return [a isKindOfClass:[NSString class]] && [a length] ? NormalizeMAC(a) : nil;
+}
+
+static int ConfigInt(NSDictionary *cfg, NSString *key) {
+    id v = cfg[key];
+    return [v respondsToSelector:@selector(intValue)] ? [v intValue] : 0;
+}
+
+// Save the device and the channel that just worked, if they differ from what is stored.
+static void Remember(NSString *mac, int channel) {
+    NSMutableDictionary *cfg = LoadConfig();
+    mac = NormalizeMAC(mac);
+    BOOL sameDevice = [ConfigAddress(cfg) isEqualToString:mac];
+    if (sameDevice && ConfigInt(cfg, @"Channel") == channel) return;
+    cfg[@"Address"] = mac;
+    if (channel > 0) cfg[@"Channel"] = @(channel);
+    else if (!sameDevice) [cfg removeObjectForKey:@"Channel"];
+    if (SaveConfig(cfg)) BBLog("remembered %s, rfcomm channel %d", mac.UTF8String, channel);
 }
 
 #pragma mark - Galaxy Buds frame decoding (display only)
@@ -161,7 +209,6 @@ static int DecodeFrames(NSMutableData *buf) {
     }
 }
 
-
 #pragma mark - CoreBluetooth classic session
 
 @interface BBSession : NSObject
@@ -172,7 +219,6 @@ static int DecodeFrames(NSMutableData *buf) {
 @property BOOL channelDone;        // open attempt finished (success or failure)
 @property NSInteger channelError;
 @property BOOL channelClosed;
-@property (copy) NSString *error;  // short reason for the last failure (sent to daemon clients)
 @end
 @implementation BBSession @end
 
@@ -181,49 +227,38 @@ static const char *ManagerStateName(long long s) {
     return (s >= 0 && s <= 5) ? names[s] : "?";
 }
 
-// One CBClassicManager (= one bluetoothd session) shared by all clients. It is recreated when it stops
-// being powered on, e.g. after bluetoothd restarts, which also orphans every peer it handed out.
-static id<BBClassicManager> gManager;
-static pthread_mutex_t gManagerLock = PTHREAD_MUTEX_INITIALIZER;
-
-static long long ManagerState(id<BBClassicManager> m) {
-    __block long long st = 0;
-    OnCB(^{ st = m.state; });
-    return st;
-}
-
-static id<BBClassicManager> EnsureManager(double timeout, NSString **error) {
+static BOOL CreateManager(BBSession *s) {
     Class cls = NSClassFromString(@"CBClassicManager");
-    if (!cls) { BBLog("CBClassicManager class not found - is this iOS 15?"); if (error) *error = @"unsupported iOS"; return nil; }
-    pthread_mutex_lock(&gManagerLock);
-    id<BBClassicManager> m = gManager;
-    if (m && ManagerState(m) == kManagerPoweredOn) { pthread_mutex_unlock(&gManagerLock); return m; }
-    for (int attempt = 0; attempt < 2; attempt++) {
-        if (!m || attempt > 0) {
-            if (m) BBLog("bluetooth session not ready (state %s), recreating it", ManagerStateName(ManagerState(m)));
-            OnCB(^{ gManager = [(id<BBClassicManager>)[cls alloc] initWithQueue:gCBQueue options:nil]; });
-            m = gManager;
-        }
-        if (WaitFor(timeout, ^{ return (BOOL)(m.state == kManagerPoweredOn); })) {
-            if (gVerbose) BBLog("manager powered on");
-            pthread_mutex_unlock(&gManagerLock);
-            return m;
-        }
-    }
-    long long st = ManagerState(m);
-    pthread_mutex_unlock(&gManagerLock);
-    BBLog("Bluetooth manager not ready: state=%lld (%s)", st, ManagerStateName(st));
-    if (st == 3) BBLog("unauthorized: entitlements were rejected - check `ldid -e $(which budsrfcomm)`");
-    if (st == 4) BBLog("Bluetooth is off - turn it on");
-    if (error) *error = st == 4 ? @"bluetooth is off" : st == 3 ? @"bluetooth unauthorized" : @"bluetooth unavailable";
-    return nil;
+    if (!cls) { BBLog("CBClassicManager class not found - is this iOS 15?"); return NO; }
+    OnCB(^{ s.manager = [(id<BBClassicManager>)[cls alloc] initWithQueue:gCBQueue options:nil]; });
+    return YES;
 }
 
-static BOOL StartManager(BBSession *s) {
-    NSString *err = nil;
-    s.manager = EnsureManager(10, &err);
-    if (!s.manager) s.error = err;
-    return s.manager != nil;
+static BOOL WaitPoweredOn(BBSession *s, double seconds) {
+    if (!WaitFor(seconds, ^{ return (BOOL)(s.manager.state == kManagerPoweredOn); })) {
+        __block long long st = 0; OnCB(^{ st = s.manager.state; });
+        BBLog("Bluetooth manager not ready: state=%lld (%s)", st, ManagerStateName(st));
+        if (st == 3) BBLog("unauthorized: entitlements were rejected - check `ldid -e $(which budsrfcomm)`");
+        if (st == 4) BBLog("Bluetooth is off - turn it on");
+        return NO;
+    }
+    if (gVerbose) BBLog("manager powered on");
+    return YES;
+}
+
+static BOOL StartManager(BBSession *s) { return CreateManager(s) && WaitPoweredOn(s, 10); }
+
+// For the long-running service: if the manager isn't usable (Bluetooth just came up, or bluetoothd
+// restarted and the old XPC session went stale), throw it away and start a fresh one.
+static BOOL EnsureManager(BBSession *s) {
+    __block long long st = -1;
+    if (s.manager) OnCB(^{ st = s.manager.state; });
+    if (st == kManagerPoweredOn) return YES;
+    if (s.manager && WaitPoweredOn(s, 5)) return YES;
+    if (s.manager) BBLog("restarting the Bluetooth manager session");
+    OnCB(^{ s.manager.connectCallback = nil; s.manager = nil; });
+    s.peer = nil;
+    return CreateManager(s) && WaitPoweredOn(s, 10);
 }
 
 static void PrintPeer(id<BBClassicPeer> p) {
@@ -241,19 +276,49 @@ static void PrintPeer(id<BBClassicPeer> p) {
 static BOOL FindPeer(BBSession *s, NSString *mac) {
     NSString *want = NormalizeMAC(mac);
     OnCB(^{
-        s.peer = nil;
         for (id<BBClassicPeer> p in [s.manager retrievePairedPeersWithOptions:nil] ?: @[])
             if ([NormalizeMAC(p.addressString ?: @"") isEqualToString:want]) { s.peer = p; return; }
         s.peer = [s.manager retrievePeerWithAddress:want];
     });
-    if (!s.peer) { BBLog("no device with address %s (is it paired?)", want.UTF8String); s.error = @"device not paired"; return NO; }
+    if (!s.peer) { BBLog("no device with address %s (is it paired?)", want.UTF8String); return NO; }
     BBLog("device: %s (%s)", s.peer.name.UTF8String ?: "?", want.UTF8String);
     return YES;
 }
 
+// No address given or remembered: pick the paired device named "...Buds...". If there are several,
+// prefer the one that is connected right now.
+static NSString *DetectBuds(BBSession *s) {
+    __block NSMutableArray<id<BBClassicPeer>> *buds = [NSMutableArray array];
+    OnCB(^{
+        for (id<BBClassicPeer> p in [s.manager retrievePairedPeersWithOptions:nil] ?: @[])
+            if (p.addressString.length && [p.name rangeOfString:@"Buds" options:NSCaseInsensitiveSearch].location != NSNotFound)
+                [buds addObject:p];
+    });
+    if (!buds.count) {
+        BBLog("no paired Galaxy Buds found - pair them in Settings, or set the address with `budsrfcomm config <MAC>`");
+        return nil;
+    }
+    __block id<BBClassicPeer> pick = buds.firstObject;
+    OnCB(^{ for (id<BBClassicPeer> p in buds) if (p.state == kPeerConnected) { pick = p; break; } });
+    __block NSString *mac = nil, *name = nil;
+    OnCB(^{ mac = NormalizeMAC(pick.addressString); name = pick.name; });
+    BBLog("using paired device %s (%s)%s", name.UTF8String ?: "?", mac.UTF8String,
+          buds.count > 1 ? " - several Buds are paired, set one with `budsrfcomm config <MAC>`" : "");
+    return mac;
+}
+
+// Address from the command line, else the remembered one, else auto-detected.
+static NSString *ResolveAddress(BBSession *s, NSString *macArg) {
+    if (macArg) return NormalizeMAC(macArg);
+    NSString *mac = ConfigAddress(LoadConfig());
+    if (mac) return mac;
+    return DetectBuds(s);
+}
+
 static BOOL ConnectPeer(BBSession *s) {
-    // Always send connectPeer: even if the buds are already connected for audio: the completion message
-    // (handleSuccessfulConnection:) is what attaches the peer to this session.
+    // Always send connectPeer: even if the buds are already connected for audio. The
+    // completion message (handleSuccessfulConnection:) is what delivers kCBMsgArgServices,
+    // i.e. the SDP-derived service list with RFCOMM channel numbers.
     __block BOOL already = NO;
     OnCB(^{ already = s.peer.state == kPeerConnected; });
 
@@ -267,18 +332,20 @@ static BOOL ConnectPeer(BBSession *s) {
         // options must be non-nil: CoreBluetooth puts it into an NSDictionary unchecked
         [s.manager connectPeer:s.peer options:@{}];
     });
-    BBLog(already ? "device already connected, refreshing session..."
+    BBLog(already ? "device already connected, refreshing session (to get its service list)..."
                   : "connecting to device (make sure at least one bud is out of the case)...");
     if (!WaitFor(already ? 8 : 20, ^{ return done; })) {
-        if (!already) { BBLog("timed out waiting for connection"); s.error = @"connect timed out"; return NO; }
+        if (!already) { BBLog("timed out waiting for connection"); return NO; }
         BBLog("no connect confirmation (peer was already connected) - continuing");
     } else if (err) {
-        if (!already) { BBLog("connection failed: error %ld", (long)err); s.error = @"connect failed"; return NO; }
+        if (!already) { BBLog("connection failed: error %ld", (long)err); return NO; }
         BBLog("connect returned error %ld (peer was already connected) - continuing", (long)err);
     } else {
         BBLog("device connected");
     }
-    if (gVerbose) OnCB(^{ BBLog("peer services: %s", s.peer.services.description.UTF8String ?: "(none)"); });
+    if (gVerbose) OnCB(^{
+        BBLog("peer services: %s", s.peer.services.description.UTF8String ?: "(none)");
+    });
     return YES;
 }
 
@@ -301,13 +368,11 @@ static BOOL OpenChannelTimeout(BBSession *s, double timeout, BOOL quiet) {
     });
     if (!quiet) BBLog("opening rfcomm channel %u...", s.channelID);
     if (!WaitFor(timeout, ^{ return ws.channelDone; })) {
-        if (!quiet) BBLog("timed out opening channel (is the BudsBridge tweak loaded in bluetoothd?)");
-        s.error = @"channel open timed out";
+        if (!quiet) BBLog("timed out opening channel");
         return NO;
     }
     if (!s.channel || s.channelError) {
         if (!quiet) BBLog("open failed: error %ld", (long)s.channelError);
-        s.error = @"channel open failed";
         return NO;
     }
     if (!quiet) BBLog("rfcomm channel open: fd=%d mtu=%u", s.channel.socketFD, s.channel.mtu);
@@ -357,7 +422,7 @@ static BOOL ScanChannels(BBSession *s) {
     for (int ch = 1; ch <= 30; ch++) {
         s.channelID = (unsigned char)ch;
         if (!OpenChannelTimeout(s, 6, YES)) {
-            if (gVerbose) BBLog("  channel %2d: no service (error %ld)", ch, (long)s.channelError);
+            BBLog("  channel %2d: no service (error %ld)", ch, (long)s.channelError);
             continue;
         }
         size_t total = 0;
@@ -367,13 +432,12 @@ static BOOL ScanChannels(BBSession *s) {
         if (valid > 0) { BBLog("found Galaxy Buds service on rfcomm channel %d", ch); return YES; }
     }
     BBLog("no channel answered with Galaxy Buds frames");
-    s.error = @"galaxy buds service not found";
     return NO;
 }
 
-// SDP lookup first, then a channel scan. Sets s.channelID.
-static BOOL ResolveChannel(BBSession *s, NSString *uuidOverride) {
-    s.channelID = 0;
+static BOOL ResolveChannel(BBSession *s, int forced, NSString *uuidOverride) {
+    if (forced > 0) { s.channelID = (unsigned char)forced; return YES; }
+    if (s.channelID) return YES;  // already resolved earlier in this run
     NSArray *uuids = uuidOverride ? @[uuidOverride] : KnownUUIDs();
     __block unsigned char ch = 0; __block NSString *which = nil;
     OnCB(^{
@@ -387,47 +451,12 @@ static BOOL ResolveChannel(BBSession *s, NSString *uuidOverride) {
         s.channelID = ch;
         return YES;
     }
-    if (gVerbose) BBLog("Samsung SPP service not in the device's service list");
-    return ScanChannels(s);
-}
-
-#pragma mark - Channel cache (per device, survives restarts)
-
-static NSString *const kChannelCachePath = @"/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist";
-static pthread_mutex_t gCacheLock = PTHREAD_MUTEX_INITIALIZER;
-
-static int CachedChannel(NSString *mac) {
-    pthread_mutex_lock(&gCacheLock);
-    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:kChannelCachePath];
-    pthread_mutex_unlock(&gCacheLock);
-    id v = d[@"channels"][NormalizeMAC(mac)];
-    return [v isKindOfClass:[NSNumber class]] ? [v intValue] : 0;
-}
-
-static void StoreChannel(NSString *mac, int ch) {
-    pthread_mutex_lock(&gCacheLock);
-    NSMutableDictionary *d = [([NSDictionary dictionaryWithContentsOfFile:kChannelCachePath] ?: @{}) mutableCopy];
-    NSMutableDictionary *chans = [([d[@"channels"] isKindOfClass:[NSDictionary class]] ? d[@"channels"] : @{}) mutableCopy];
-    if (ch) chans[NormalizeMAC(mac)] = @(ch); else [chans removeObjectForKey:NormalizeMAC(mac)];
-    d[@"channels"] = chans;
-    if (![d writeToFile:kChannelCachePath atomically:YES] && gVerbose) BBLog("could not write %s", kChannelCachePath.UTF8String);
-    pthread_mutex_unlock(&gCacheLock);
-}
-
-// Open the Buds channel: forced channel, else cached channel, else SDP/scan (and remember the result).
-static BOOL OpenBudsChannel(BBSession *s, NSString *mac, int forced, NSString *uuid) {
-    if (forced > 0) { s.channelID = (unsigned char)forced; return OpenChannel(s); }
-    int cached = CachedChannel(mac);
-    if (cached > 0) {
-        if (gVerbose) BBLog("using cached rfcomm channel %d", cached);
-        s.channelID = (unsigned char)cached;
-        if (OpenChannel(s)) return YES;
-        BBLog("cached channel %d failed, looking it up again", cached);
-        StoreChannel(mac, 0);
-    }
-    if (!ResolveChannel(s, uuid) || !OpenChannel(s)) return NO;
-    StoreChannel(mac, s.channelID);
-    return YES;
+    BBLog("Samsung SPP service not in the device's service list");
+    OnCB(^{ BBLog("known services: %s", s.peer.services.description.UTF8String ?: "(none)"); });
+    if (ScanChannels(s)) return YES;
+    s.channelID = 0;
+    BBLog("pass the RFCOMM channel explicitly with -c <channel>");
+    return NO;
 }
 
 static BOOL WriteAll(int fd, const uint8_t *p, size_t n) {
@@ -437,50 +466,6 @@ static BOOL WriteAll(int fd, const uint8_t *p, size_t n) {
         p += w; n -= (size_t)w;
     }
     return YES;
-}
-
-static BOOL WriteStr(int fd, NSString *str) {
-    const char *c = str.UTF8String;
-    return WriteAll(fd, (const uint8_t *)c, strlen(c));
-}
-
-// Copy bytes between a client socket and the open RFCOMM channel until either side closes.
-static void Pump(BBSession *s, int cfd) {
-    int rfd = s.channel.socketFD;
-    uint8_t buf[4096];
-    for (;;) {
-        struct pollfd p[2] = {{cfd, POLLIN, 0}, {rfd, POLLIN, 0}};
-        int r = poll(p, 2, 500);
-        if (s.channelClosed) { BBLog("rfcomm channel closed"); break; }
-        if (r < 0) { if (errno == EINTR) continue; break; }
-        if (r == 0) continue;
-        if (p[0].revents & (POLLIN | POLLHUP | POLLERR)) {
-            ssize_t n = read(cfd, buf, sizeof buf);
-            if (n <= 0) { BBLog("client disconnected"); break; }
-            if (gVerbose) HexDump("<<", buf, (size_t)n);
-            if (!WriteAll(rfd, buf, (size_t)n)) { BBLog("rfcomm write failed: %s", strerror(errno)); break; }
-        }
-        if (p[1].revents & (POLLIN | POLLHUP | POLLERR)) {
-            ssize_t n = read(rfd, buf, sizeof buf);
-            if (n <= 0) { BBLog("rfcomm socket closed"); break; }
-            if (gVerbose) HexDump(">>", buf, (size_t)n);
-            if (!WriteAll(cfd, buf, (size_t)n)) { BBLog("client write failed"); break; }
-        }
-    }
-}
-
-static int ListenTCP(int port) {
-    int lfd = socket(AF_INET, SOCK_STREAM, 0);
-    int one = 1; setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-    struct sockaddr_in sa = {.sin_len = sizeof sa, .sin_family = AF_INET, .sin_port = htons((uint16_t)port)};
-    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (bind(lfd, (struct sockaddr *)&sa, sizeof sa) || listen(lfd, 8)) {
-        BBLog("cannot listen on 127.0.0.1:%d: %s", port, strerror(errno));
-        if (errno == EADDRINUSE) BBLog("port in use - is the budsrfcomm daemon already running? (use -p for another port)");
-        close(lfd);
-        return -1;
-    }
-    return lfd;
 }
 
 #pragma mark - Commands
@@ -495,10 +480,28 @@ static int CmdList(void) {
     return 0;
 }
 
-static int CmdProbe(NSString *mac, int channel, NSString *uuid, NSData *send, int seconds) {
+// Connect the device and open its SPP channel. Channel order: -c, then the remembered channel for this
+// device, then the SDP record, then a scan. If the remembered channel stops working (new firmware, other
+// Buds with the same address), look it up again once.
+static BOOL OpenBudsChannel(BBSession *s, NSString *mac, int channelArg, NSString *uuid) {
+    NSDictionary *cfg = LoadConfig();
+    int remembered = [ConfigAddress(cfg) isEqualToString:mac] ? ConfigInt(cfg, @"Channel") : 0;
+    if (!FindPeer(s, mac) || !ConnectPeer(s)) return NO;
+    s.channelID = 0;
+    if (!channelArg && remembered) BBLog("using remembered rfcomm channel %d", remembered);
+    if (!ResolveChannel(s, channelArg ?: remembered, uuid)) return NO;
+    if (OpenChannel(s)) return YES;
+    if (channelArg || !remembered || gStop) return NO;
+    BBLog("remembered channel %d did not open, looking the channel up again", remembered);
+    s.channelID = 0;
+    return ResolveChannel(s, 0, uuid) && OpenChannel(s);
+}
+
+static int CmdProbe(NSString *macArg, int channel, NSString *uuid, NSData *send, int seconds) {
     BBSession *s = [BBSession new];
-    if (!StartManager(s) || !FindPeer(s, mac) || !ConnectPeer(s) || !OpenBudsChannel(s, mac, channel, uuid))
-        return 2;
+    if (!StartManager(s)) return 2;
+    NSString *mac = ResolveAddress(s, macArg);
+    if (!mac || !OpenBudsChannel(s, mac, channel, uuid)) return 2;
     if (send.length) {
         HexDump("<<", send.bytes, send.length);
         if (!WriteAll(s.channel.socketFD, send.bytes, send.length)) BBLog("write failed: %s", strerror(errno));
@@ -507,129 +510,117 @@ static int CmdProbe(NSString *mac, int channel, NSString *uuid, NSData *send, in
     size_t total = 0;
     int valid = Listen(s, seconds, YES, &total);
     BBLog("received %zu bytes total, %d valid buds frames (rfcomm channel %u)", total, valid, s.channelID);
+    if (valid > 0) Remember(mac, s.channelID);
     CloseChannel(s);
     return total ? 0 : 1;
 }
 
-// Raw bridge for one fixed device, no handshake (manual testing with nc).
-static int CmdServe(NSString *mac, int channel, NSString *uuid, int port) {
-    int lfd = ListenTCP(port);
-    if (lfd < 0) return 2;
-    BBLog("raw bridge for %s listening on 127.0.0.1:%d - each TCP client gets a fresh rfcomm channel",
-          NormalizeMAC(mac).UTF8String, port);
-    for (;;) {
+// The background service's log grows by a few lines per session. Keep it under 1 MB.
+static void TrimLogFile(void) {
+    struct stat st;
+    if (fstat(STDERR_FILENO, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > (1 << 20)) {
+        ftruncate(STDERR_FILENO, 0);
+        // in case launchd didn't open the log with O_APPEND
+        lseek(STDERR_FILENO, 0, SEEK_SET);
+        lseek(STDOUT_FILENO, 0, SEEK_SET);
+        BBLog("log trimmed");
+    }
+}
+
+// Runs as the LaunchDaemon (no arguments) or by hand. It never exits on Bluetooth problems: the device,
+// channel and Bluetooth state are checked again for every TCP client, so the service can start at boot
+// before Bluetooth is up or the Buds are paired.
+static int CmdServe(NSString *macArg, int channel, NSString *uuid, int portArg) {
+    TrimLogFile();
+    int port = portArg ?: ConfigInt(LoadConfig(), @"Port") ?: BB_DEFAULT_PORT;
+    BBLog("budsrfcomm " BB_VERSION " serve, settings in " BB_CONFIG_PATH);
+
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    int one = 1; setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in sa = {.sin_len = sizeof sa, .sin_family = AF_INET, .sin_port = htons((uint16_t)port)};
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(lfd, (struct sockaddr *)&sa, sizeof sa) || listen(lfd, 1)) {
+        BBLog("cannot listen on 127.0.0.1:%d: %s", port, strerror(errno)); return 2;
+    }
+    BBLog("bridge listening on 127.0.0.1:%d - each TCP client gets a fresh rfcomm channel", port);
+
+    BBSession *s = [BBSession new];
+    // Start the manager now so it is usually powered on by the time the first client arrives.
+    // Not fatal: EnsureManager() retries per client.
+    CreateManager(s);
+
+    while (!gStop) {
         int cfd = accept(lfd, NULL, NULL);
         if (cfd < 0) { if (errno == EINTR) continue; BBLog("accept: %s", strerror(errno)); return 2; }
-        int one = 1; setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+        setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
         BBLog("client connected");
+        NSString *mac = nil;
+        BOOL ready = NO;
         @autoreleasepool {
-            BBSession *s = [BBSession new];
-            if (StartManager(s) && FindPeer(s, mac) && ConnectPeer(s) && OpenBudsChannel(s, mac, channel, uuid)) {
-                Pump(s, cfd);
-                CloseChannel(s);
-            } else {
-                BBLog("could not open rfcomm channel (%s), dropping client", s.error.UTF8String ?: "?");
+            if (EnsureManager(s)) mac = ResolveAddress(s, macArg);
+            ready = mac && OpenBudsChannel(s, mac, channel, uuid);
+        }
+        if (!ready) {
+            BBLog("could not open rfcomm channel, dropping client");
+            close(cfd); continue;
+        }
+        Remember(mac, s.channelID);
+        int rfd = s.channel.socketFD;
+        uint8_t buf[4096];
+        for (;;) {
+            struct pollfd p[2] = {{cfd, POLLIN, 0}, {rfd, POLLIN, 0}};
+            int r = poll(p, 2, 500);
+            if (s.channelClosed || gStop) break;
+            if (r < 0) { if (errno == EINTR) continue; break; }
+            if (r == 0) continue;
+            if (p[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+                ssize_t n = read(cfd, buf, sizeof buf);
+                if (n <= 0) { BBLog("client disconnected"); break; }
+                if (gVerbose) HexDump("<<", buf, (size_t)n);
+                if (!WriteAll(rfd, buf, (size_t)n)) { BBLog("rfcomm write failed: %s", strerror(errno)); break; }
+            }
+            if (p[1].revents & (POLLIN | POLLHUP | POLLERR)) {
+                ssize_t n = read(rfd, buf, sizeof buf);
+                if (n <= 0) { BBLog("rfcomm socket closed"); break; }
+                if (gVerbose) HexDump(">>", buf, (size_t)n);
+                if (!WriteAll(cfd, buf, (size_t)n)) { BBLog("client write failed"); break; }
             }
         }
         close(cfd);
+        CloseChannel(s);
         BBLog("session ended, waiting for next client");
     }
+    close(lfd);
+    BBLog("stopped");
+    return 0;
 }
 
-#pragma mark - Daemon (app bridge)
-
-// PROTOCOL (127.0.0.1:8762). The client sends one command line terminated by "\n":
-//
-//   PING                       -> "PONG budsrfcomm <version>\n", then close
-//   LIST                       -> "DEVICE <MAC>\t<connected 0|1>\t<name>\n" per paired classic device, "END\n", close
-//   CONNECT <MAC> [channel]    -> "OK <channel>\n" then raw bytes in both directions until either side closes,
-//                                 or "ERR <reason>\n" and close
-//
-// Only one CONNECT session can be active at a time; others get "ERR busy". LIST and PING always work.
-
-static volatile int gBusy = 0;
-static NSString *gUUIDOverride;
-
-static BOOL ReadLine(int fd, char *out, size_t cap, int timeoutMs) {
-    size_t n = 0;
-    while (n + 1 < cap) {
-        struct pollfd p = {fd, POLLIN, 0};
-        int r = poll(&p, 1, timeoutMs);
-        if (r <= 0) { if (r < 0 && errno == EINTR) continue; return NO; }
-        char c;
-        if (read(fd, &c, 1) != 1) return NO;
-        if (c == '\n') { out[n] = 0; if (n && out[n - 1] == '\r') out[n - 1] = 0; return YES; }
-        out[n++] = c;
-    }
-    return NO;
-}
-
-static void HandleList(int cfd) {
-    NSString *err = nil;
-    id<BBClassicManager> m = EnsureManager(10, &err);
-    if (!m) { WriteStr(cfd, [NSString stringWithFormat:@"ERR %@\n", err]); return; }
-    __block NSMutableString *out = [NSMutableString string];
-    OnCB(^{
-        for (id<BBClassicPeer> p in [m retrievePairedPeersWithOptions:nil] ?: @[]) {
-            NSString *name = [[p.name ?: @"" componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]
-                              componentsJoinedByString:@" "];
-            [out appendFormat:@"DEVICE %@\t%d\t%@\n", NormalizeMAC(p.addressString ?: @""),
-                              p.state == kPeerConnected ? 1 : 0, name];
+static int CmdConfig(NSString *macArg, int channel, int port) {
+    NSMutableDictionary *cfg = LoadConfig();
+    if (macArg || channel || port) {
+        if (macArg) {
+            NSString *mac = NormalizeMAC(macArg);
+            if (![ConfigAddress(cfg) isEqualToString:mac]) [cfg removeObjectForKey:@"Channel"];  // other device
+            cfg[@"Address"] = mac;
         }
-    });
-    [out appendString:@"END\n"];
-    WriteStr(cfd, out);
+        if (channel) cfg[@"Channel"] = @(channel);
+        if (port) cfg[@"Port"] = @(port);
+        if (!SaveConfig(cfg)) return 2;
+        if (port) printf("port changed: restart the service with `sudo launchctl kickstart -k system/com.galaxybudsclient.budsrfcomm`\n");
+    }
+    printf("settings file: %s\n", BB_CONFIG_PATH);
+    NSString *mac = ConfigAddress(cfg);
+    int ch = ConfigInt(cfg, @"Channel"), p = ConfigInt(cfg, @"Port");
+    printf("  device:  %s\n", mac ? mac.UTF8String : "(not set - the first paired \"Buds\" device is used)");
+    if (ch) printf("  channel: %d\n", ch); else printf("  channel: (not set - looked up on first connect)\n");
+    printf("  port:    %d%s\n", p ?: BB_DEFAULT_PORT, p ? "" : " (default)");
+    return 0;
 }
 
-static void HandleConnect(int cfd, NSString *mac, int channel) {
-    if (!__sync_bool_compare_and_swap(&gBusy, 0, 1)) { WriteStr(cfd, @"ERR busy\n"); return; }
-    BBLog("client requests %s", NormalizeMAC(mac).UTF8String);
-    BBSession *s = [BBSession new];
-    if (StartManager(s) && FindPeer(s, mac) && ConnectPeer(s) && OpenBudsChannel(s, mac, channel, gUUIDOverride)) {
-        if (WriteStr(cfd, [NSString stringWithFormat:@"OK %u\n", s.channelID])) Pump(s, cfd);
-        CloseChannel(s);
-        BBLog("session for %s ended", NormalizeMAC(mac).UTF8String);
-    } else {
-        BBLog("connect to %s failed: %s", NormalizeMAC(mac).UTF8String, s.error.UTF8String ?: "unknown error");
-        WriteStr(cfd, [NSString stringWithFormat:@"ERR %@\n", s.error ?: @"unknown error"]);
-    }
-    __sync_lock_release(&gBusy);
-}
-
-static void *ClientThread(void *arg) {
-    int cfd = (int)(intptr_t)arg;
-    @autoreleasepool {
-        char line[256];
-        if (!ReadLine(cfd, line, sizeof line, 5000)) {
-            WriteStr(cfd, @"ERR expected a command line\n");
-        } else {
-            NSArray<NSString *> *tok = [[@(line) componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
-                                        filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
-            NSString *cmd = tok.firstObject.uppercaseString ?: @"";
-            if ([cmd isEqualToString:@"PING"]) WriteStr(cfd, @"PONG budsrfcomm " BB_VERSION "\n");
-            else if ([cmd isEqualToString:@"LIST"]) HandleList(cfd);
-            else if ([cmd isEqualToString:@"CONNECT"] && tok.count >= 2) HandleConnect(cfd, tok[1], tok.count >= 3 ? tok[2].intValue : 0);
-            else WriteStr(cfd, @"ERR unknown command\n");
-        }
-    }
-    close(cfd);
-    return NULL;
-}
-
-static int CmdDaemon(int port) {
-    int lfd = -1;
-    // At boot the port can briefly still be held by a previous instance; keep trying instead of exiting.
-    while ((lfd = ListenTCP(port)) < 0) sleep(5);
-    BBLog("budsrfcomm " BB_VERSION " daemon listening on 127.0.0.1:%d", port);
-    for (;;) {
-        int cfd = accept(lfd, NULL, NULL);
-        if (cfd < 0) { if (errno == EINTR || errno == ECONNABORTED) continue; BBLog("accept: %s", strerror(errno)); sleep(1); continue; }
-        int one = 1; setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-        setsockopt(cfd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-        pthread_t t;
-        if (pthread_create(&t, NULL, ClientThread, (void *)(intptr_t)cfd) == 0) pthread_detach(t);
-        else close(cfd);
-    }
+static int CmdForget(void) {
+    if (unlink(BB_CONFIG_PATH) && errno != ENOENT) { BBLog("cannot remove %s: %s", BB_CONFIG_PATH, strerror(errno)); return 2; }
+    printf("forgot the remembered device, channel and port\n");
+    return 0;
 }
 
 static void Usage(void) {
@@ -637,25 +628,36 @@ static void Usage(void) {
         "budsrfcomm " BB_VERSION " - Galaxy Buds RFCOMM access for jailbroken iOS 15\n\n"
         "usage:\n"
         "  budsrfcomm [-v] list\n"
-        "  budsrfcomm [-v] probe <MAC> [-c channel] [-u uuid] [-s hex] [-t seconds]\n"
-        "  budsrfcomm [-v] serve <MAC> [-c channel] [-u uuid] [-p port]\n"
-        "  budsrfcomm [-v] daemon [-u uuid] [-p port]\n\n"
-        "  -c  RFCOMM channel number (default: cached, else looked up / scanned and cached)\n"
+        "  budsrfcomm [-v] probe [MAC] [-c channel] [-u uuid] [-s hex] [-t seconds]\n"
+        "  budsrfcomm [-v] serve [MAC] [-c channel] [-u uuid] [-p port]\n"
+        "  budsrfcomm config [MAC] [-c channel] [-p port]\n"
+        "  budsrfcomm forget\n\n"
+        "  MAC defaults to the remembered device, else the paired device named \"...Buds...\".\n"
+        "  A channel that works is remembered in " BB_CONFIG_PATH ".\n"
+        "  The package runs `budsrfcomm serve` in the background (LaunchDaemon com.galaxybudsclient.budsrfcomm).\n\n"
+        "  -c  RFCOMM channel number (default: remembered, else the SDP record, else a scan)\n"
         "  -u  service UUID to look up (default: Samsung SPP UUIDs)\n"
         "  -s  hex bytes to send after the channel opens (probe)\n"
         "  -t  seconds to listen (probe, default 15)\n"
-        "  -p  TCP port for serve/daemon (default 8762)\n"
-        "  -v  verbose (hex dumps of all traffic)\n\n"
-        "daemon protocol: send \"PING\", \"LIST\" or \"CONNECT <MAC> [channel]\" + newline; see README.\n");
+        "  -p  TCP port for the bridge (serve/config, default: remembered, else 8762)\n"
+        "  -v  verbose\n");
 }
+
+static void OnStopSignal(int sig) { (void)sig; gStop = 1; }
 
 int main(int argc, char **argv) {
     @autoreleasepool {
         signal(SIGPIPE, SIG_IGN);
+        // no SA_RESTART: a blocked accept() must return EINTR so serve can close the channel and exit
+        struct sigaction stop = {0};
+        stop.sa_handler = OnStopSignal;
+        sigaction(SIGTERM, &stop, NULL);
+        sigaction(SIGINT, &stop, NULL);
         setvbuf(stdout, NULL, _IOLBF, 0);
+        setvbuf(stderr, NULL, _IOLBF, 0);
         gCBQueue = dispatch_queue_create("budsrfcomm.cb", DISPATCH_QUEUE_SERIAL);
 
-        int channel = 0, seconds = 15, port = 8762, opt;
+        int channel = 0, seconds = 15, port = 0, opt;
         NSString *uuid = nil; NSData *send = nil;
         // allow options anywhere: collect non-option args manually
         NSMutableArray<NSString *> *args = [NSMutableArray array];
@@ -673,11 +675,14 @@ int main(int argc, char **argv) {
         }
         if (!args.count) { Usage(); return 64; }
         NSString *cmd = args[0];
+        NSString *mac = args.count > 1 ? args[1] : nil;
+        if (channel < 0 || channel > 30) { BBLog("-c must be an RFCOMM channel 1-30"); return 64; }
+        if (port < 0 || port > 65535) { BBLog("-p must be a TCP port"); return 64; }
         if ([cmd isEqualToString:@"list"]) return CmdList();
-        if ([cmd isEqualToString:@"daemon"]) { gUUIDOverride = uuid; return CmdDaemon(port); }
-        if (args.count < 2) { Usage(); return 64; }
-        if ([cmd isEqualToString:@"probe"]) return CmdProbe(args[1], channel, uuid, send, seconds);
-        if ([cmd isEqualToString:@"serve"]) return CmdServe(args[1], channel, uuid, port);
+        if ([cmd isEqualToString:@"probe"]) return CmdProbe(mac, channel, uuid, send, seconds);
+        if ([cmd isEqualToString:@"serve"]) return CmdServe(mac, channel, uuid, port);
+        if ([cmd isEqualToString:@"config"]) return CmdConfig(mac, channel, port);
+        if ([cmd isEqualToString:@"forget"]) return CmdForget();
         Usage();
         return 64;
     }

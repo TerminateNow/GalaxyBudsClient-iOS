@@ -28,13 +28,10 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
    sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.3.0_iphoneos-arm64.deb
    ```
 
-3. Restart `bluetoothd` so it loads the tweak. Bluetooth drops for a few seconds and then reconnects.
+   The install restarts `bluetoothd` so it loads the tweak (Bluetooth drops for a few seconds, then reconnects),
+   and starts the bridge service. Nothing else needs to be run by hand.
 
-   ```bash
-   sudo killall bluetoothd
-   ```
-
-4. Check that the tweak loaded:
+3. Check that the tweak loaded:
 
    ```bash
    oslog | grep --line-buffered BudsBridge
@@ -43,37 +40,40 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
    Leave this running, and in a second SSH session run `sudo killall bluetoothd` again.
    You should see `[BudsBridge] loaded, RFCOMM open/close handlers hooked`.
 
-Installing also starts the **bridge daemon** (`budsrfcomm daemon`) through launchd. It runs as `mobile`,
-starts at boot, is restarted if it exits, and logs to `/var/mobile/Library/Logs/budsrfcomm.log`.
+## Background service
 
-## Bridge daemon protocol
+The package installs the LaunchDaemon `com.galaxybudsclient.budsrfcomm`, which runs `budsrfcomm serve` as `mobile`.
+It listens on `127.0.0.1:8762` from the moment it starts. It opens an RFCOMM channel only while a client
+(the app) is connected, so it doesn't touch the Buds otherwise. Dopamine is semi-untethered, so "at boot" means once
+the jailbreak has been applied after a reboot.
 
-The daemon listens on `127.0.0.1:8762`. A client sends one command line ending in `\n`:
+**You don't need to give it the Buds' MAC address or channel.** The first time a client connects, the service:
 
-| Command | Reply |
+1. picks the paired device whose name contains "Buds" (the connected one if there are several),
+2. tries the SDP record, then scans channels 1–30 (up to a minute, first time only),
+3. saves the address and the channel that worked to
+   `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`.
+
+Later connections go straight to the saved channel. If that channel ever stops opening, the service looks it up
+again once and saves the new one. Running `budsrfcomm probe` successfully saves its channel too.
+
+The settings are read on every connection, so changes take effect without a restart, except the port.
+
+| Task | Command |
 |---|---|
-| `PING` | `PONG budsrfcomm <version>`, then the connection closes. |
-| `LIST` | One `DEVICE <MAC>\t<connected 0/1>\t<name>` line per paired classic device, then `END`, then the connection closes. |
-| `CONNECT <MAC> [channel]` | `OK <channel>`, followed by raw RFCOMM bytes in both directions until either side closes. On failure: `ERR <reason>`, then the connection closes. |
+| Show the saved settings | `budsrfcomm config` |
+| Set the device or channel yourself (for example several Buds paired, or channel 20 known already) | `budsrfcomm config AA:BB:CC:DD:EE:FF -c 20` |
+| Change the port (then restart the service) | `budsrfcomm config -p 8763` |
+| Forget everything and detect again | `budsrfcomm forget` |
+| Follow the log | `tail -f /var/jb/var/mobile/Library/Logs/budsrfcomm.log` |
+| Restart the service | `sudo launchctl kickstart -k system/com.galaxybudsclient.budsrfcomm` |
+| Stop it until the next boot (for example to run `serve` by hand with `-v`) | `sudo launchctl unload /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` |
+| Start it again | `sudo launchctl load -w /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` |
 
-- Only one `CONNECT` can be active at a time. A second one gets `ERR busy`. `PING` and `LIST` always work.
-- Closing the TCP connection closes the RFCOMM channel. If the Buds disconnect, the daemon closes the TCP connection.
-- The RFCOMM channel is remembered per device in `/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`.
-  The daemon only looks the channel up again (SDP lookup, then a 1–30 scan) when the remembered one fails to open.
-- If `bluetoothd` restarts, the daemon recreates its Bluetooth session on the next request.
-
-Daemon control:
-
-```bash
-sudo launchctl unload /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist
-```
+To check it end to end without the app, open a TCP connection to the bridge on the phone. The Buds' first frames come out as binary:
 
 ```bash
-sudo launchctl load -w /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist
-```
-
-```bash
-tail -f /var/mobile/Library/Logs/budsrfcomm.log
+nc 127.0.0.1 8762 | xxd | head
 ```
 
 ### Turning the tweak off
@@ -88,19 +88,16 @@ tail -f /var/mobile/Library/Logs/budsrfcomm.log
   sudo killall bluetoothd
   ```
 
-- **Uninstall:**
+- **Uninstall.** This stops the service and restarts `bluetoothd` without the tweak. `apt purge` also deletes the settings and the log.
 
   ```bash
   sudo apt remove com.galaxybudsclient.budsrfcomm
   ```
 
-  ```bash
-  sudo killall bluetoothd
-  ```
-
 ## Test (over SSH on the phone)
 
 Connect the Buds in iOS Settings first, with at least one bud out of the case.
+The MAC address is optional in every command. Without it, the saved device or the paired "Buds" device is used.
 
 1. Open the channel and listen:
 
@@ -119,29 +116,13 @@ Connect the Buds in iOS Settings first, with at least one bud out of the case.
    budsrfcomm -v probe AA:BB:CC:DD:EE:FF -c N
    ```
 
-3. Test the daemon. These need `nc` and `xxd`, so install them first with `sudo apt install netcat xxd` if you haven't:
-
-   ```bash
-   printf 'PING\n' | nc 127.0.0.1 8762
-   ```
-
-   ```bash
-   printf 'LIST\n' | nc 127.0.0.1 8762
-   ```
-
-   ```bash
-   (printf 'CONNECT AA:BB:CC:DD:EE:FF\n'; sleep 10) | nc 127.0.0.1 8762 | xxd
-   ```
-
-   The last command should print `OK 20` (as hex), followed by the Buds' frames.
-
-4. Raw bridge for one device, with no handshake. It's meant for manual testing. Use another port, since the daemon owns 8762:
+3. Bridge mode by hand, with hex dumps. The background service is the same command without `-v`, so stop the service first or use another port:
 
    ```bash
    budsrfcomm -v serve AA:BB:CC:DD:EE:FF -c N -p 8763
    ```
 
-`probe` and `serve` also use and update the remembered channel, so `-c` is optional once a channel has been found.
+   Every TCP client that connects gets a fresh RFCOMM channel to the Buds, and raw bytes pass both ways.
 
 ### If something fails, send back
 
@@ -159,8 +140,6 @@ Connect the Buds in iOS Settings first, with at least one bud out of the case.
 | Bluetooth keeps restarting | The tweak crashes `bluetoothd`. Use the off switch above and send the log. |
 | `state=3 (unauthorized)` | Entitlements rejected. Check them with `ldid -e /var/jb/usr/bin/budsrfcomm`. |
 | `connection failed` / timeout | The Buds are in the case, or connected to another device. |
-| `cannot listen on 127.0.0.1:8762` | The daemon already owns that port. Use `-p` with another port, or unload the daemon. |
-| `ERR busy` | Another client (the app, or a `CONNECT` you left running) already has the Buds open. |
 
 ## Build (Linux or WSL2)
 

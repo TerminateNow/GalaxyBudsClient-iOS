@@ -4,11 +4,11 @@
 <dict>
 	<key>Label</key>
 	<string>com.galaxybudsclient.budsrfcomm</string>
-	<!-- no MAC/channel/port here: serve reads them from its settings file and remembers what works -->
+	<!-- the app chooses the device per connection (CONNECT); defaults and channels come from the settings file -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/var/jb/usr/bin/budsrfcomm</string>
-		<string>serve</string>
+		<string>daemon</string>
 	</array>
 	<!-- the same user the bridge was tested as over SSH; owns the settings file -->
 	<key>UserName</key>

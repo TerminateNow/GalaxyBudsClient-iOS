@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/var/jb/bin/sh
+export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin
 # Stop the bridge before its binary is replaced or removed.
 case "$1" in
     remove|upgrade|deconfigure)

@@ -21,11 +21,11 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.3.0_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.3.1_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.3.0_iphoneos-arm64.deb
+   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.3.1_iphoneos-arm64.deb
    ```
 
    The install restarts `bluetoothd` so it loads the tweak (Bluetooth drops for a few seconds, then reconnects),
@@ -42,27 +42,43 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
 
 ## Background service
 
-The package installs the LaunchDaemon `com.galaxybudsclient.budsrfcomm`, which runs `budsrfcomm serve` as `mobile`.
+The package installs the LaunchDaemon `com.galaxybudsclient.budsrfcomm`, which runs `budsrfcomm daemon` as `mobile`.
 It listens on `127.0.0.1:8762` from the moment it starts. It opens an RFCOMM channel only while a client
 (the app) is connected, so it doesn't touch the Buds otherwise. Dopamine is semi-untethered, so "at boot" means once
 the jailbreak has been applied after a reboot.
 
-**You don't need to give it the Buds' MAC address or channel.** The first time a client connects, the service:
+The service doesn't stop when Bluetooth isn't ready. If Bluetooth is off, or `bluetoothd` restarts, it sets up its
+Bluetooth session again on the next request. It shuts down cleanly on SIGTERM.
 
-1. picks the paired device whose name contains "Buds" (the connected one if there are several),
-2. tries the SDP record, then scans channels 1–30 (up to a minute, first time only),
-3. saves the address and the channel that worked to
-   `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`.
+**You don't need to give it the Buds' MAC address or channel.** When a client doesn't name a device, the service:
 
-Later connections go straight to the saved channel. If that channel ever stops opening, the service looks it up
-again once and saves the new one. Running `budsrfcomm probe` successfully saves its channel too.
+1. uses the saved default device, or else picks the paired device whose name contains "Buds" (the connected one if there are several),
+2. uses the channel saved for that device, or else tries the SDP record and then scans channels 1–30 (up to a minute, first time only),
+3. saves the channel that worked, per device, to
+   `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`. The first device that works also becomes the default.
+
+If a saved channel ever stops opening, the service looks it up again once and saves the new one.
+Running `budsrfcomm probe` successfully saves its channel too.
 
 The settings are read on every connection, so changes take effect without a restart, except the port.
+
+### Protocol (what the app speaks)
+
+A client connects to `127.0.0.1:8762` and sends one command line ending in `\n`:
+
+| Command | Reply |
+|---|---|
+| `PING` | `PONG budsrfcomm <version>`, then the connection closes. |
+| `LIST` | One `DEVICE <MAC>\t<connected 0/1>\t<name>` line per paired classic device, then `END`, then the connection closes. |
+| `CONNECT [MAC] [channel]` | `OK <channel>`, followed by raw RFCOMM bytes in both directions until either side closes. On failure: `ERR <reason>`, then the connection closes. With no MAC, the default device is used. |
+
+- Only one `CONNECT` can be active at a time. A second one gets `ERR busy`. `PING` and `LIST` always work.
+- Closing the TCP connection closes the RFCOMM channel. If the Buds disconnect, the service closes the TCP connection.
 
 | Task | Command |
 |---|---|
 | Show the saved settings | `budsrfcomm config` |
-| Set the device or channel yourself (for example several Buds paired, or channel 20 known already) | `budsrfcomm config AA:BB:CC:DD:EE:FF -c 20` |
+| Set the default device, and optionally its channel (for example several Buds paired, or channel 20 known already) | `budsrfcomm config AA:BB:CC:DD:EE:FF -c 20` |
 | Change the port (then restart the service) | `budsrfcomm config -p 8763` |
 | Forget everything and detect again | `budsrfcomm forget` |
 | Follow the log | `tail -f /var/jb/var/mobile/Library/Logs/budsrfcomm.log` |
@@ -70,11 +86,22 @@ The settings are read on every connection, so changes take effect without a rest
 | Stop it until the next boot (for example to run `serve` by hand with `-v`) | `sudo launchctl unload /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` |
 | Start it again | `sudo launchctl load -w /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` |
 
-To check it end to end without the app, open a TCP connection to the bridge on the phone. The Buds' first frames come out as binary:
+To check it end to end without the app, talk to the service from the phone. These need `nc` and `xxd`
+(`sudo apt install netcat xxd`):
 
 ```bash
-nc 127.0.0.1 8762 | xxd | head
+printf 'PING\n' | nc 127.0.0.1 8762
 ```
+
+```bash
+printf 'LIST\n' | nc 127.0.0.1 8762
+```
+
+```bash
+(printf 'CONNECT\n'; sleep 10) | nc 127.0.0.1 8762 | xxd | head
+```
+
+The last command should start with `OK 20` (shown in hex), followed by the Buds' frames.
 
 ### Turning the tweak off
 
@@ -116,13 +143,18 @@ The MAC address is optional in every command. Without it, the saved device or th
    budsrfcomm -v probe AA:BB:CC:DD:EE:FF -c N
    ```
 
-3. Bridge mode by hand, with hex dumps. The background service is the same command without `-v`, so stop the service first or use another port:
+3. A raw bridge by hand, with hex dumps and no command line: a TCP client gets RFCOMM bytes straight away.
+   This is for manual testing. The service owns port 8762, so use another one:
 
    ```bash
-   budsrfcomm -v serve AA:BB:CC:DD:EE:FF -c N -p 8763
+   budsrfcomm -v serve AA:BB:CC:DD:EE:FF -p 8763
    ```
 
-   Every TCP client that connects gets a fresh RFCOMM channel to the Buds, and raw bytes pass both ways.
+   You can also run the service itself in the foreground with hex dumps. Stop the background one first:
+
+   ```bash
+   budsrfcomm -v daemon -p 8763
+   ```
 
 ### If something fails, send back
 
@@ -140,6 +172,8 @@ The MAC address is optional in every command. Without it, the saved device or th
 | Bluetooth keeps restarting | The tweak crashes `bluetoothd`. Use the off switch above and send the log. |
 | `state=3 (unauthorized)` | Entitlements rejected. Check them with `ldid -e /var/jb/usr/bin/budsrfcomm`. |
 | `connection failed` / timeout | The Buds are in the case, or connected to another device. |
+| `cannot listen on 127.0.0.1:8762` | The service already owns that port. Use `-p` with another port, or stop the service. |
+| `ERR busy` | Another client (the app, or a `CONNECT` you left running) already has the Buds open. |
 
 ## Build (Linux or WSL2)
 

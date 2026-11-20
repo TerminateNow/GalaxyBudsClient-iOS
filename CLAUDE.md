@@ -83,15 +83,18 @@ so what compiles depends on where you build.
 iOS gives apps no RFCOMM access, so the port depends on a jailbreak (rootless/Dopamine) and has two native parts.
 Both are built on Linux or WSL2, without Xcode:
 
-- **`src/budsrfcomm.m`:** a command-line client and TCP↔RFCOMM bridge (`list`, `probe [MAC] [-c ch]`, `serve [MAC] [-c ch] [-p port]`,
-  `config`, `forget`). It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
-  - **Background service:** `layout/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` runs `budsrfcomm serve` as `mobile`, on `127.0.0.1:8762` by default.
-    The package's `postinst` loads it and restarts `bluetoothd`. `prerm` unloads it, and `postrm` restarts `bluetoothd` on removal.
-  - **Settings:** the device, channel and port live in `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`.
-    `serve` rereads them on every client connection and saves the device and channel that worked.
-    Without a saved address, it uses the paired device whose name contains "Buds".
-  - **Runtime state:** `serve` never exits on Bluetooth errors. It recreates the `CBClassicManager` if it isn't powered on, because `bluetoothd` may restart.
-    Its log is `/var/jb/var/mobile/Library/Logs/budsrfcomm.log`, trimmed at 1 MB.
+- **`src/budsrfcomm.m`:** a command-line client and TCP↔RFCOMM bridge (`list`, `probe [MAC]`, `serve [MAC]`, `daemon`, `config`, `forget`).
+  It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
+  - **Background service:** `layout/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` runs `budsrfcomm daemon` as `mobile` on `127.0.0.1:8762`.
+    The package's `postinst` loads it and restarts `bluetoothd`, so the tweak loads. `prerm` unloads it, and `postrm` restarts `bluetoothd` on removal.
+  - **Protocol, which is what the iOS app's `IBluetoothService` must speak:** one command line, either `PING`, `LIST`, or `CONNECT [MAC] [channel]`.
+    `CONNECT` answers `OK <channel>` and then passes raw bytes in both directions. Only one `CONNECT` can be active, and others get `ERR busy`.
+    The protocol is specified in `ios/BudsBridge/README.md`.
+  - **Settings:** `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist` holds `Address` (the default device),
+    `Channels` (MAC to RFCOMM channel) and `Port`. They're reread on every connection. A channel that works is saved per device.
+    Without a MAC or a saved default, the paired device whose name contains "Buds" is used.
+  - **Runtime state:** the service never exits on Bluetooth errors. It recreates the shared `CBClassicManager` when it isn't powered on, because `bluetoothd` may restart.
+    It exits cleanly on SIGTERM. Its log is `/var/jb/var/mobile/Library/Logs/budsrfcomm.log`, emptied once it passes 1 MB.
 - **`tweak/BudsBridge.m`:** an ElleKit tweak injected into `bluetoothd`. On iOS 15.8.8 the daemon's
   open/close-RFCOMM handlers are stubs. The tweak hooks them and opens the channel with `bluetoothd`'s internal
   `OI_RFCOMM_*` functions, then hands data to the client through a socketpair.

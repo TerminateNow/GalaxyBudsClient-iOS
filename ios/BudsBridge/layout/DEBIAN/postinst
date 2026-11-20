@@ -1,12 +1,14 @@
-#!/bin/sh
+#!/var/jb/bin/sh
+export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin
 # Never fail the install over these steps: the files are in place either way.
 
 PLIST=/var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist
 LOGDIR=/var/jb/var/mobile/Library/Logs
-CONFIG=/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist
+PREFDIR=/var/jb/var/mobile/Library/Preferences
+CONFIG=$PREFDIR/com.galaxybudsclient.budsrfcomm.plist
 
 # The service runs as mobile: it needs to write its log and its settings file.
-mkdir -p "$LOGDIR" && chown 501:501 "$LOGDIR"
+mkdir -p "$LOGDIR" "$PREFDIR" && chown 501:501 "$LOGDIR" "$PREFDIR"
 [ -e "$CONFIG" ] && chown 501:501 "$CONFIG"
 
 if [ "$1" = configure ]; then

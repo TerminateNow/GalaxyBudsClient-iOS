@@ -81,3 +81,29 @@ computed over the id and payload. After RFCOMM connects, the buds push
    The handler at `0x1001b09a0` checks that `kCBMsgArgRFCOMMChannelID` is between 1 and 30, looks up
    the device by `kCBMsgArgDeviceUUID` (`0x1003544a0`) and opens the channel (`0x100354838`).
    On failure it logs `handleOpenRFCOMMChannel failed with result 0x%x …`.
+
+## On-device result (budsrfcomm 0.1.2): the CoreBluetooth RFCOMM path is stubbed out on iOS
+
+From the `bluetoothd` log on the iPhone 7 running 15.8.8:
+
+- Session check-in, TCC (granted through `com.apple.private.tcc.allow`), `CBMsgIdRetrievePairedPeersWithOptions`,
+  `CBMsgIdConnectPeer` and `CBMsgIdPeerConnectionCompleted` all succeed.
+- The connect-completed message carries **no** `kCBMsgArgServices`, so `services` stays empty.
+- Each `CBMsgIdPeerOpenRFCOMM` is logged as `handleOpenRFCOMMChannel rfcommChannelID: N`, and then nothing
+  happens: no error, no RFCOMM traffic, no `CBMsgIdPeerRFCOMMOpened`.
+
+Static confirmation: after logging, the handler at `0x1001b09a0` calls `0x100354838(<singleton>, <global block 0x10071f270>)`.
+That dispatches a global block whose invoke function (`0x1001b58b8`) is a single `ret`. **Outgoing RFCOMM through
+CoreBluetooth is compiled out of iOS `bluetoothd`**, while the client side in CoreBluetooth still exists.
+
+## Next approach: tweak injected into bluetoothd
+
+`bluetoothd`'s own profiles still open outgoing RFCOMM channels through the internal stack:
+
+- Braille: `0x100311050` logs "Initiating outgoing Braille connection … rfcomm channel %d", then calls
+  `0x100183bf8` (which contains the "OI_RFCOMM_Connect failed" string, so this is likely `OI_RFCOMM_Connect`). Arguments include the
+  device address (`x2`), a callback table (`x1`), what looks like a max frame size `0x3ef` (`w4`), an out-handle and a params struct.
+- Wireless iAP: `0x10049193c` and `0x100530728`.
+
+Plan: an ElleKit tweak loaded into `bluetoothd` that calls this internal connect with its own callback table and
+forwards data to a local socket. `budsrfcomm` stays as the client and CLI.

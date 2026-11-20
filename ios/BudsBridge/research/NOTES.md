@@ -71,8 +71,12 @@ computed over the id and payload. After RFCOMM connects, the buds push
 
 ## Open questions, to be answered on the device
 
-1. Is `connectPeer:` required when the Buds are already connected for audio, or does the peer show `state == 2` immediately?
-2. Is the peer's `services` array (SDP) filled in before the session connects?
+1. ~~Is `connectPeer:` required when the Buds are already connected for audio?~~ On the device, yes in practice.
+   The peer already reports `state == 2`, but `services` stays empty without it.
+2. ~~Is the peer's `services` array (SDP) filled in before the session connects?~~ No. `services` is only set by
+   `-[CBClassicPeer handleSuccessfulConnection:]` (address `0x1a324aab8`), which reads `kCBMsgArgServices` and
+   `kCBMsgArgSDPRecordData` from the connect-completed message. Since 0.1.1, `budsrfcomm` always calls `connectPeer:` and
+   falls back to scanning RFCOMM channels 1–30 for a valid Buds frame.
 3. ~~Does `bluetoothd` impose more checks on outgoing RFCOMM to non-Apple devices?~~ Statically, no.
    The handler at `0x1001b09a0` checks that `kCBMsgArgRFCOMMChannelID` is between 1 and 30, looks up
    the device by `kCBMsgArgDeviceUUID` (`0x1003544a0`) and opens the channel (`0x100354838`).

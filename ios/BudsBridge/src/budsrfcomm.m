@@ -20,7 +20,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define BB_VERSION "0.1.0"
+#define BB_VERSION "0.1.1"
 
 static const long long kManagerPoweredOn = 5;     // CBManagerStatePoweredOn
 static const long long kPeerConnected = 2;         // CBClassicPeer state "connected"
@@ -36,6 +36,7 @@ static NSArray<NSString *> *KnownUUIDs(void) {
 }
 
 static BOOL gVerbose = NO;
+static BOOL gQuietFrames = NO;   // DecodeFrames: count only, no output
 static dispatch_queue_t gCBQueue;
 
 #pragma mark - Logging / helpers
@@ -118,28 +119,33 @@ static const char *MsgName(uint8_t id) {
 }
 
 // Buds+ and newer framing: FD | size:u16le (low 10 bits) | id | payload | crc16le | DD
-static void DecodeFrames(NSMutableData *buf) {
+// Returns the number of frames with a valid CRC that were consumed.
+static int DecodeFrames(NSMutableData *buf) {
+    int valid = 0;
     for (;;) {
         const uint8_t *b = buf.bytes; size_t n = buf.length;
         size_t start = 0;
         while (start < n && b[start] != 0xFD) start++;
         if (start) { [buf replaceBytesInRange:NSMakeRange(0, start) withBytes:NULL length:0]; continue; }
-        if (n < 4) return;
+        if (n < 4) return valid;
         size_t size = (b[1] | (b[2] << 8)) & 0x3FF;
         size_t total = 1 + 2 + size + 1;
         if (size < 3) { [buf replaceBytesInRange:NSMakeRange(0, 1) withBytes:NULL length:0]; continue; }
-        if (n < total) return;
+        if (n < total) return valid;
         if (b[total - 1] != 0xDD) { [buf replaceBytesInRange:NSMakeRange(0, 1) withBytes:NULL length:0]; continue; }
         uint8_t id = b[3];
         const uint8_t *payload = b + 4; size_t plen = size - 3;
         uint16_t want = (uint16_t)(payload[plen] | (payload[plen + 1] << 8));
         uint16_t got = Crc16(b + 3, 1 + plen);
         BOOL isResponse = (b[2] & 0x10) != 0;
-        printf(">> frame id=0x%02x (%d) %s %s len=%zu crc=%s\n", id, id, MsgName(id),
-               isResponse ? "[response]" : "", plen, want == got ? "ok" : "BAD");
-        if (id == 0x61 && plen >= 4)
-            printf(">> battery: left=%d%% right=%d%% (revision %d)\n", payload[2], payload[3], payload[0]);
+        if (!gQuietFrames) {
+            printf(">> frame id=0x%02x (%d) %s %s len=%zu crc=%s\n", id, id, MsgName(id),
+                   isResponse ? "[response]" : "", plen, want == got ? "ok" : "BAD");
+            if (id == 0x61 && plen >= 4)
+                printf(">> battery: left=%d%% right=%d%% (revision %d)\n", payload[2], payload[3], payload[0]);
+        }
         fflush(stdout);
+        if (want == got) valid++;
         [buf replaceBytesInRange:NSMakeRange(0, total) withBytes:NULL length:0];
     }
 }
@@ -202,9 +208,11 @@ static BOOL FindPeer(BBSession *s, NSString *mac) {
 }
 
 static BOOL ConnectPeer(BBSession *s) {
+    // Always send connectPeer: even if the buds are already connected for audio. The
+    // completion message (handleSuccessfulConnection:) is what delivers kCBMsgArgServices,
+    // i.e. the SDP-derived service list with RFCOMM channel numbers.
     __block BOOL already = NO;
     OnCB(^{ already = s.peer.state == kPeerConnected; });
-    if (already) { if (gVerbose) BBLog("peer already connected in this session"); return YES; }
 
     __block BOOL done = NO; __block NSInteger err = 0;
     NSUUID *pid = s.peer.identifier;
@@ -215,35 +223,24 @@ static BOOL ConnectPeer(BBSession *s) {
         };
         [s.manager connectPeer:s.peer options:nil];
     });
-    BBLog("connecting to device (make sure the buds are out of the case)...");
-    if (!WaitFor(20, ^{ return done; })) { BBLog("timed out waiting for connection"); return NO; }
-    if (err) { BBLog("connection failed: error %ld", (long)err); return NO; }
-    BBLog("device connected");
-    return YES;
-}
-
-static BOOL ResolveChannel(BBSession *s, int forced, NSString *uuidOverride) {
-    if (forced > 0) { s.channelID = (unsigned char)forced; return YES; }
-    NSArray *uuids = uuidOverride ? @[uuidOverride] : KnownUUIDs();
-    __block unsigned char ch = 0; __block NSString *which = nil;
-    OnCB(^{
-        for (NSString *u in uuids) {
-            ch = [s.peer rfcommChannelIDForService:[CBUUID UUIDWithString:u]];
-            if (ch) { which = u; break; }
-        }
-    });
-    if (!ch) {
-        BBLog("could not find the Samsung SPP service in the device's SDP record");
-        OnCB(^{ BBLog("known services: %s", s.peer.services.description.UTF8String ?: "(none)"); });
-        BBLog("pass the RFCOMM channel explicitly with -c <channel>");
-        return NO;
+    BBLog(already ? "device already connected, refreshing session (to get its service list)..."
+                  : "connecting to device (make sure at least one bud is out of the case)...");
+    if (!WaitFor(already ? 8 : 20, ^{ return done; })) {
+        if (!already) { BBLog("timed out waiting for connection"); return NO; }
+        BBLog("no connect confirmation (peer was already connected) - continuing");
+    } else if (err) {
+        if (!already) { BBLog("connection failed: error %ld", (long)err); return NO; }
+        BBLog("connect returned error %ld (peer was already connected) - continuing", (long)err);
+    } else {
+        BBLog("device connected");
     }
-    BBLog("service %s -> rfcomm channel %u", which.UTF8String, ch);
-    s.channelID = ch;
+    if (gVerbose) OnCB(^{
+        BBLog("peer services: %s", s.peer.services.description.UTF8String ?: "(none)");
+    });
     return YES;
 }
 
-static BOOL OpenChannel(BBSession *s) {
+static BOOL OpenChannelTimeout(BBSession *s, double timeout, BOOL quiet) {
     s.channelDone = NO; s.channelClosed = NO; s.channel = nil; s.channelError = 0;
     __weak BBSession *ws = s;
     OnCB(^{
@@ -255,23 +252,102 @@ static BOOL OpenChannel(BBSession *s) {
         s.peer.disconnectRFCOMMCallback = ^(id<BBRFCOMMChannel> ch, NSInteger code) {
             BBSession *ss = ws; if (!ss) return;
             if (ch && ch.channelID != ss.channelID) return;
-            BBLog("rfcomm channel closed by bluetoothd (code %ld)", (long)code);
+            if (!quiet || gVerbose) BBLog("rfcomm channel closed by bluetoothd (code %ld)", (long)code);
             ss.channelClosed = YES;
         };
         [s.peer openRFCOMMChannel:s.channelID];
     });
-    BBLog("opening rfcomm channel %u...", s.channelID);
-    if (!WaitFor(15, ^{ return ws.channelDone; })) { BBLog("timed out opening channel"); return NO; }
-    if (!s.channel || s.channelError) { BBLog("open failed: error %ld", (long)s.channelError); return NO; }
-    BBLog("rfcomm channel open: fd=%d mtu=%u", s.channel.socketFD, s.channel.mtu);
+    if (!quiet) BBLog("opening rfcomm channel %u...", s.channelID);
+    if (!WaitFor(timeout, ^{ return ws.channelDone; })) {
+        if (!quiet) BBLog("timed out opening channel");
+        return NO;
+    }
+    if (!s.channel || s.channelError) {
+        if (!quiet) BBLog("open failed: error %ld", (long)s.channelError);
+        return NO;
+    }
+    if (!quiet) BBLog("rfcomm channel open: fd=%d mtu=%u", s.channel.socketFD, s.channel.mtu);
     return YES;
 }
+
+static BOOL OpenChannel(BBSession *s) { return OpenChannelTimeout(s, 15, NO); }
 
 static void CloseChannel(BBSession *s) {
     if (!s.channel) return;
     OnCB(^{ [s.peer closeRFCOMMChannel:s.channelID]; });
     WaitFor(3, ^{ return s.channelClosed; });
     s.channel = nil;
+}
+
+// Read from the open channel for `seconds`; returns the number of valid Buds frames seen.
+static int Listen(BBSession *s, double seconds, BOOL dump, size_t *totalOut) {
+    int fd = s.channel.socketFD, valid = 0;
+    NSMutableData *frames = [NSMutableData data];
+    uint8_t buf[4096]; size_t total = 0;
+    struct timeval start, now; gettimeofday(&start, NULL);
+    for (;;) {
+        gettimeofday(&now, NULL);
+        double el = (now.tv_sec - start.tv_sec) + (now.tv_usec - start.tv_usec) / 1e6;
+        if (el >= seconds || s.channelClosed) break;
+        struct pollfd pfd = {fd, POLLIN, 0};
+        int r = poll(&pfd, 1, 250);
+        if (r < 0 && errno != EINTR) break;
+        if (r <= 0) continue;
+        ssize_t n = read(fd, buf, sizeof buf);
+        if (n <= 0) { if (dump) BBLog("socket closed (%s)", n < 0 ? strerror(errno) : "eof"); break; }
+        total += (size_t)n;
+        if (dump) HexDump(">>", buf, (size_t)n);
+        [frames appendBytes:buf length:(size_t)n];
+        gQuietFrames = !dump;
+        valid += DecodeFrames(frames);
+        gQuietFrames = NO;
+    }
+    if (totalOut) *totalOut = total;
+    return valid;
+}
+
+// Fallback when the SDP lookup fails: try every RFCOMM channel and keep the first one
+// that speaks the Galaxy Buds protocol (a CRC-valid FD..DD frame).
+static BOOL ScanChannels(BBSession *s) {
+    BBLog("scanning rfcomm channels 1-30 for the Galaxy Buds service (takes up to a minute)...");
+    for (int ch = 1; ch <= 30; ch++) {
+        s.channelID = (unsigned char)ch;
+        if (!OpenChannelTimeout(s, 6, YES)) {
+            BBLog("  channel %2d: no service (error %ld)", ch, (long)s.channelError);
+            continue;
+        }
+        size_t total = 0;
+        int valid = Listen(s, 3, NO, &total);
+        CloseChannel(s);
+        BBLog("  channel %2d: open, %zu bytes, %d buds frames", ch, total, valid);
+        if (valid > 0) { BBLog("found Galaxy Buds service on rfcomm channel %d", ch); return YES; }
+    }
+    BBLog("no channel answered with Galaxy Buds frames");
+    return NO;
+}
+
+static BOOL ResolveChannel(BBSession *s, int forced, NSString *uuidOverride) {
+    if (forced > 0) { s.channelID = (unsigned char)forced; return YES; }
+    if (s.channelID) return YES;  // already resolved earlier in this run
+    NSArray *uuids = uuidOverride ? @[uuidOverride] : KnownUUIDs();
+    __block unsigned char ch = 0; __block NSString *which = nil;
+    OnCB(^{
+        for (NSString *u in uuids) {
+            ch = [s.peer rfcommChannelIDForService:[CBUUID UUIDWithString:u]];
+            if (ch) { which = u; break; }
+        }
+    });
+    if (ch) {
+        BBLog("service %s -> rfcomm channel %u", which.UTF8String, ch);
+        s.channelID = ch;
+        return YES;
+    }
+    BBLog("Samsung SPP service not in the device's service list");
+    OnCB(^{ BBLog("known services: %s", s.peer.services.description.UTF8String ?: "(none)"); });
+    if (ScanChannels(s)) return YES;
+    s.channelID = 0;
+    BBLog("pass the RFCOMM channel explicitly with -c <channel>");
+    return NO;
 }
 
 static BOOL WriteAll(int fd, const uint8_t *p, size_t n) {
@@ -299,28 +375,14 @@ static int CmdProbe(NSString *mac, int channel, NSString *uuid, NSData *send, in
     BBSession *s = [BBSession new];
     if (!StartManager(s) || !FindPeer(s, mac) || !ConnectPeer(s) || !ResolveChannel(s, channel, uuid) || !OpenChannel(s))
         return 2;
-    int fd = s.channel.socketFD;
     if (send.length) {
         HexDump("<<", send.bytes, send.length);
-        if (!WriteAll(fd, send.bytes, send.length)) BBLog("write failed: %s", strerror(errno));
+        if (!WriteAll(s.channel.socketFD, send.bytes, send.length)) BBLog("write failed: %s", strerror(errno));
     }
     BBLog("listening for %d s (the buds normally send EXTENDED_STATUS_UPDATED right away)...", seconds);
-    NSMutableData *frames = [NSMutableData data];
-    uint8_t buf[4096]; size_t total = 0;
-    time_t end = time(NULL) + seconds;
-    while (time(NULL) < end && !s.channelClosed) {
-        struct pollfd pfd = {fd, POLLIN, 0};
-        int r = poll(&pfd, 1, 250);
-        if (r < 0 && errno != EINTR) break;
-        if (r <= 0) continue;
-        ssize_t n = read(fd, buf, sizeof buf);
-        if (n <= 0) { BBLog("socket closed (%s)", n < 0 ? strerror(errno) : "eof"); break; }
-        total += (size_t)n;
-        HexDump(">>", buf, (size_t)n);
-        [frames appendBytes:buf length:(size_t)n];
-        DecodeFrames(frames);
-    }
-    BBLog("received %zu bytes total", total);
+    size_t total = 0;
+    int valid = Listen(s, seconds, YES, &total);
+    BBLog("received %zu bytes total, %d valid buds frames (rfcomm channel %u)", total, valid, s.channelID);
     CloseChannel(s);
     return total ? 0 : 1;
 }

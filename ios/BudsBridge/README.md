@@ -9,19 +9,19 @@ iOS 15 has a hidden Bluetooth Classic API inside CoreBluetooth (`CBClassicManage
 those entitlements, so **no tweak or `bluetoothd` hook is needed**. Details are in
 [`research/NOTES.md`](research/NOTES.md).
 
-Tested target: iPhone 7, iOS 15.8.8 (19H422), Dopamine. Other iOS 15 builds will probably work.
+Target: iPhone 7, iOS 15.8.8 (19H422), Dopamine. On that device, the classic session is confirmed working (entitlements accepted, Buds found). Opening the RFCOMM channel hasn't been confirmed yet. Other iOS 15 builds will probably work.
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.1.0_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.1.1_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   scp com.galaxybudsclient.budsrfcomm_0.1.0_iphoneos-arm64.deb mobile@<phone-ip>:/var/mobile/
+   scp com.galaxybudsclient.budsrfcomm_0.1.1_iphoneos-arm64.deb mobile@<phone-ip>:/var/mobile/
    ```
 
    ```bash
-   ssh mobile@<phone-ip> "sudo dpkg -i /var/mobile/com.galaxybudsclient.budsrfcomm_0.1.0_iphoneos-arm64.deb"
+   ssh mobile@<phone-ip> "sudo dpkg -i /var/mobile/com.galaxybudsclient.budsrfcomm_0.1.1_iphoneos-arm64.deb"
    ```
 
 ## Test (over SSH on the phone)
@@ -77,7 +77,7 @@ Pair and connect the Buds in iOS Settings first, and take them out of the case.
 | `state=3 (unauthorized)` | Entitlements rejected. Check them with `ldid -e /var/jb/usr/bin/budsrfcomm`. |
 | `CBClassicManager class not found` | Not iOS 15, or CoreBluetooth changed. |
 | `connection failed` / timeout | Buds are in the case, or connected to another device. |
-| `could not find the Samsung SPP service` | SDP record not cached. Use `-c <channel>`. |
+| `Samsung SPP service not in the device's service list` | The tool falls back to scanning channels 1–30 on its own. Once you know the channel, pass `-c <channel>` to skip the scan. |
 
 ## Build (Linux or WSL2)
 

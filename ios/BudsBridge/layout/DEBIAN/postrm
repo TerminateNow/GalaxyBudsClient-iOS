@@ -1,0 +1,12 @@
+#!/bin/sh
+case "$1" in
+    remove|purge)
+        # Unload the removed tweak from bluetoothd. Bluetooth drops for a few seconds and reconnects.
+        killall bluetoothd 2>/dev/null
+        ;;
+esac
+if [ "$1" = purge ]; then
+    rm -f /var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist \
+          /var/jb/var/mobile/Library/Logs/budsrfcomm.log
+fi
+exit 0

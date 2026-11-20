@@ -17,6 +17,7 @@ LDFLAGS  := -target arm64-apple-ios15.0 -isysroot $(SDK) -fuse-ld=lld --ld-path=
             -framework Foundation -framework CoreBluetooth
 
 TWEAKDIR := /var/jb/Library/MobileSubstrate/DynamicLibraries
+DAEMONDIR := /var/jb/Library/LaunchDaemons
 
 all: build/budsrfcomm build/BudsBridge.dylib
 
@@ -31,10 +32,13 @@ build/BudsBridge.dylib: tweak/BudsBridge.m
 	$(LDID) -S $@
 
 package: build/budsrfcomm build/BudsBridge.dylib
-	rm -rf build/pkg && mkdir -p build/pkg$(PREFIX) build/pkg$(TWEAKDIR)
+	rm -rf build/pkg && mkdir -p build/pkg$(PREFIX) build/pkg$(TWEAKDIR) build/pkg$(DAEMONDIR)
 	cp -r layout/DEBIAN build/pkg/
+	chmod 0755 build/pkg/DEBIAN/postinst build/pkg/DEBIAN/prerm build/pkg/DEBIAN/postrm
 	cp build/budsrfcomm build/pkg$(PREFIX)/
 	cp build/BudsBridge.dylib tweak/BudsBridge.plist build/pkg$(TWEAKDIR)/
+	cp layout/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist build/pkg$(DAEMONDIR)/
+	chmod 0644 build/pkg$(DAEMONDIR)/com.galaxybudsclient.budsrfcomm.plist
 	dpkg-deb -Zgzip --root-owner-group -b build/pkg build/$(PKG)_$(VERSION)_iphoneos-arm64.deb
 
 clean:

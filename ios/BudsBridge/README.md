@@ -21,20 +21,20 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.2.1_iphoneos-arm64.deb` to the phone.
+> `dist/` still holds 0.2.1, which has no background service. Build 0.3.0 with `make package` (see Build below)
+> and install that `.deb`.
+
+1. Copy `com.galaxybudsclient.budsrfcomm_0.3.0_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.2.1_iphoneos-arm64.deb
+   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.3.0_iphoneos-arm64.deb
    ```
 
-3. Restart `bluetoothd` so it loads the tweak. Bluetooth drops for a few seconds and then reconnects.
+   The install restarts `bluetoothd` so it loads the tweak (Bluetooth drops for a few seconds, then reconnects),
+   and starts the bridge service. Nothing else needs to be run by hand.
 
-   ```bash
-   sudo killall bluetoothd
-   ```
-
-4. Check that the tweak loaded:
+3. Check that the tweak loaded:
 
    ```bash
    oslog | grep --line-buffered BudsBridge
@@ -42,6 +42,42 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
 
    Leave this running, and in a second SSH session run `sudo killall bluetoothd` again.
    You should see `[BudsBridge] loaded, RFCOMM open/close handlers hooked`.
+
+## Background service
+
+The package installs the LaunchDaemon `com.galaxybudsclient.budsrfcomm`, which runs `budsrfcomm serve` as `mobile`.
+It listens on `127.0.0.1:8762` from the moment it starts. It opens an RFCOMM channel only while a client
+(the app) is connected, so it doesn't touch the Buds otherwise. Dopamine is semi-untethered, so "at boot" means once
+the jailbreak has been applied after a reboot.
+
+**You don't need to give it the Buds' MAC address or channel.** The first time a client connects, the service:
+
+1. picks the paired device whose name contains "Buds" (the connected one if there are several),
+2. tries the SDP record, then scans channels 1–30 (up to a minute, first time only),
+3. saves the address and the channel that worked to
+   `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`.
+
+Later connections go straight to the saved channel. If that channel ever stops opening, the service looks it up
+again once and saves the new one. Running `budsrfcomm probe` successfully saves its channel too.
+
+The settings are read on every connection, so changes take effect without a restart, except the port.
+
+| Task | Command |
+|---|---|
+| Show the saved settings | `budsrfcomm config` |
+| Set the device or channel yourself (for example several Buds paired, or channel 20 known already) | `budsrfcomm config AA:BB:CC:DD:EE:FF -c 20` |
+| Change the port (then restart the service) | `budsrfcomm config -p 8763` |
+| Forget everything and detect again | `budsrfcomm forget` |
+| Follow the log | `tail -f /var/jb/var/mobile/Library/Logs/budsrfcomm.log` |
+| Restart the service | `sudo launchctl kickstart -k system/com.galaxybudsclient.budsrfcomm` |
+| Stop it until the next boot (for example to run `serve` by hand with `-v`) | `sudo launchctl unload /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` |
+| Start it again | `sudo launchctl load -w /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` |
+
+To check it end to end without the app, open a TCP connection to the bridge on the phone. The Buds' first frames come out as binary:
+
+```bash
+nc 127.0.0.1 8762 | xxd | head
+```
 
 ### Turning the tweak off
 
@@ -55,19 +91,16 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
   sudo killall bluetoothd
   ```
 
-- **Uninstall:**
+- **Uninstall.** This stops the service and restarts `bluetoothd` without the tweak. `apt purge` also deletes the settings and the log.
 
   ```bash
   sudo apt remove com.galaxybudsclient.budsrfcomm
   ```
 
-  ```bash
-  sudo killall bluetoothd
-  ```
-
 ## Test (over SSH on the phone)
 
 Connect the Buds in iOS Settings first, with at least one bud out of the case.
+The MAC address is optional in every command. Without it, the saved device or the paired "Buds" device is used.
 
 1. Open the channel and listen:
 
@@ -86,13 +119,13 @@ Connect the Buds in iOS Settings first, with at least one bud out of the case.
    budsrfcomm -v probe AA:BB:CC:DD:EE:FF -c N
    ```
 
-3. Bridge mode, which the app will use later:
+3. Bridge mode by hand, with hex dumps. The background service is the same command without `-v`, so stop the service first or use another port:
 
    ```bash
-   budsrfcomm -v serve AA:BB:CC:DD:EE:FF -c N -p 8762
+   budsrfcomm -v serve AA:BB:CC:DD:EE:FF -c N -p 8763
    ```
 
-   Every TCP client that connects to `127.0.0.1:8762` gets a fresh RFCOMM channel to the Buds, and raw bytes pass both ways.
+   Every TCP client that connects gets a fresh RFCOMM channel to the Buds, and raw bytes pass both ways.
 
 ### If something fails, send back
 

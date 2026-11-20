@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stop the bridge before its binary is replaced or removed.
+case "$1" in
+    remove|upgrade|deconfigure)
+        launchctl unload /var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist 2>/dev/null
+        ;;
+esac
+exit 0

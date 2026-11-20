@@ -1,8 +1,8 @@
 Package: com.galaxybudsclient.budsrfcomm
 Name: budsrfcomm
-Version: 0.2.1
+Version: 0.3.0
 Architecture: iphoneos-arm64
-Description: RFCOMM bridge for Galaxy Buds (GalaxyBudsClient iOS port). Includes a bluetoothd tweak for iOS 15.8.8 (19H422) only.
+Description: RFCOMM bridge for Galaxy Buds (GalaxyBudsClient iOS port), running as a background service on 127.0.0.1:8762. Includes a bluetoothd tweak for iOS 15.8.8 (19H422) only.
 Maintainer: GalaxyBudsClient-iOS
 Author: GalaxyBudsClient-iOS
 Section: Utilities

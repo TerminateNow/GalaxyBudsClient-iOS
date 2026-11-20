@@ -20,7 +20,7 @@ implements outgoing RFCOMM for it: the message IDs are `CBMsgIdPeerOpenRFCOMM` a
 | `[[CBClassicManager alloc] initWithQueue:q options:nil]` | Calls `startWithQueue:options:sessionType:3` (classic session) and watches `state` through KVO. `state == 5` means powered on. |
 | `-retrievePairedPeersWithOptions:` | Returns `CBClassicPeer` objects for paired devices. |
 | `-retrievePeerWithAddress:` | Sync XPC message `0x26` with `kCBMsgArgAddressString`. |
-| `-connectPeer:options:` | XPC message `0x27` with `kCBMsgArgDeviceUUID` and optionally `kCBMsgArgOptions` (`kCBOptionServicesKey`). Completion arrives in `handlePeerConnectionCompleted:`, which calls `connectCallback(peer, [error code])`. |
+| `-connectPeer:options:` | XPC message `0x27` with `kCBMsgArgDeviceUUID` and optionally `kCBMsgArgOptions` (`kCBOptionServicesKey`). **`options` must not be nil**: it goes straight into `dictionaryWithObjects:forKeys:count:`, so passing nil throws `NSInvalidArgumentException`. Completion arrives in `handlePeerConnectionCompleted:`, which calls `connectCallback(peer, [error code])`. |
 | `CBClassicPeer -rfcommChannelIDForService:(CBUUID*)` | Reads `[self service:uuid][@"kCBMsgArgRFCOMMChannelID"]` from the device's SDP-derived `services`. Returns 0 if the service isn't found. |
 | `CBClassicPeer -openRFCOMMChannel:(uint8)` | XPC message `0x35` with `kCBMsgArgRFCOMMChannelID` and `kCBMsgArgOptions`. Goes through `sendMsg:args:`, which calls `sendMsg:requiresConnected:YES`, so the **peer must have `state == 2`** first; otherwise the message is dropped. |
 | `-handleRFCOMMChannelOpened:` | Builds `[[CBRFCOMMChannel alloc] initWithPeer:self info:args]`, then calls `connectRFCOMMCallback(channel, [error code])`. |

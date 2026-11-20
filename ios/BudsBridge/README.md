@@ -13,15 +13,15 @@ Target: iPhone 7, iOS 15.8.8 (19H422), Dopamine. On that device, the classic ses
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.1.1_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.1.2_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   scp com.galaxybudsclient.budsrfcomm_0.1.1_iphoneos-arm64.deb mobile@<phone-ip>:/var/mobile/
+   scp com.galaxybudsclient.budsrfcomm_0.1.2_iphoneos-arm64.deb mobile@<phone-ip>:/var/mobile/
    ```
 
    ```bash
-   ssh mobile@<phone-ip> "sudo dpkg -i /var/mobile/com.galaxybudsclient.budsrfcomm_0.1.1_iphoneos-arm64.deb"
+   ssh mobile@<phone-ip> "sudo dpkg -i /var/mobile/com.galaxybudsclient.budsrfcomm_0.1.2_iphoneos-arm64.deb"
    ```
 
 ## Test (over SSH on the phone)

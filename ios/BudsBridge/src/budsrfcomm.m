@@ -20,7 +20,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define BB_VERSION "0.1.1"
+#define BB_VERSION "0.1.2"
 
 static const long long kManagerPoweredOn = 5;     // CBManagerStatePoweredOn
 static const long long kPeerConnected = 2;         // CBClassicPeer state "connected"
@@ -221,7 +221,8 @@ static BOOL ConnectPeer(BBSession *s) {
             if (p && ![p.identifier isEqual:pid]) return;
             err = code; done = YES;
         };
-        [s.manager connectPeer:s.peer options:nil];
+        // options must be non-nil: CoreBluetooth puts it into an NSDictionary unchecked
+        [s.manager connectPeer:s.peer options:@{}];
     });
     BBLog(already ? "device already connected, refreshing session (to get its service list)..."
                   : "connecting to device (make sure at least one bud is out of the case)...");

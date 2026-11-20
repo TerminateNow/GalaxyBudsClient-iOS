@@ -132,3 +132,14 @@ Callback signatures, from their call sites in the RFCOMM module:
 - `callbacks[1]` receive: `(handle, data*, len)`. The data is only valid during the call.
 - write confirm: `(handle, data*, len, status)`
 - `callbacks[2..4]` are optional (line status, among others) and are passed as NULL, as Braille does.
+
+## On-device result (0.2.1): working
+
+iPhone 7, iOS 15.8.8 (19H422), Dopamine, Galaxy Buds3 Pro (firmware `R630XXU0AZG2`):
+
+- 0.2.0 refused to hook because it assumed `bluetoothd` was dyld image 0. 0.2.1 finds the image by path and checks
+  its LC_UUID (`B69B9F42-F0B0-3697-8707-1CF0466942C4`), then hooks.
+- Channel scan: channels without a service fail in about 50 ms (the connect confirm reports an error). Channels 10 and 11 open but stay silent.
+  **Channel 20** is the Samsung SPP service.
+- On open (frame size 669), the buds send `EXTENDED_STATUS_UPDATED` (0x61, revision 4), then 0x68 (firmware string), 0xCD and 0x0F.
+  All 7 frames had valid CRCs. Note that the high byte of the header can carry 0x40/0x80/0xC0 flags (bits 6 and 7), which `budsrfcomm`'s decoder ignores.

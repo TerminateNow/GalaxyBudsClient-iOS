@@ -1,0 +1,110 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+GalaxyBudsClient is an unofficial manager for Samsung Galaxy Buds, built in C# on .NET 11 with an Avalonia UI.
+It targets Windows, macOS, Linux and Android. This fork (`GalaxyBudsClient-iOS`) is adding an iOS port for
+**jailbroken** devices. The transport for that port lives in `ios/BudsBridge/` (see "iOS port" below).
+
+## Build and test
+
+The SDK version is pinned in `global.json` (`11.0.100`, roll forward to the latest patch). Restore must use the repo's NuGet
+config. CI does this in `.github/workflows/compile-*.yml`:
+
+```bash
+dotnet restore -r linux-x64 --configfile GalaxyBudsClient/nuget.config GalaxyBudsClient/GalaxyBudsClient.csproj
+```
+
+```bash
+dotnet publish -f net11.0 -r linux-x64 -c Release -p:PublishSingleFile=true --self-contained true --no-restore GalaxyBudsClient/GalaxyBudsClient.csproj
+```
+
+- Windows: `-f net11.0-windows10.0.26100 -r win-x64`
+- macOS: `dotnet workload install macos`, then add `-p:UseMacOSSDK=true -f net11.0-macos` to both restore and publish
+- Android: `GalaxyBudsClient.Android/build.sh [aab|apk] <prop>`. It's the maintainer's script, with hardcoded keystore and SDK paths.
+
+The tests use NUnit and FluentAssertions, in `GalaxyBudsClient.Tests`:
+
+```bash
+dotnet test GalaxyBudsClient.Tests
+```
+
+```bash
+dotnet test GalaxyBudsClient.Tests --filter "FullyQualifiedName~MessageTests"
+```
+
+Translation files in `GalaxyBudsClient/i18n/*.axaml` are checked in CI against `en.axaml` as the source of truth.
+Add new UI strings to `en.axaml`.
+
+## How the target framework is chosen
+
+`GalaxyBudsClient.csproj` picks its `TargetFramework` from the **host OS** (`Host.props`). `Platform.props` then
+derives `IsWindows`/`IsOSX`/`IsLinux` from the TFM and defines the `Windows`, `OSX`, `Linux` (and `MACOS_SDK`) compile
+constants. Android builds pass `IsAndroid=true`, which turns the main project into a library and defines `Android`.
+Platform-specific code throughout the main project is gated with `#if Windows` / `#if Linux` / `#if OSX` / `#if Android`,
+so what compiles depends on where you build.
+
+## Architecture
+
+- **`GalaxyBudsClient/`** is the shared app: Avalonia UI (`Interface/`: views, view models with ReactiveUI source
+  generators, and pages), the protocol (`Message/`), device models (`Model/`) and the platform glue (`Platform/`).
+- **Platform abstraction:** `GalaxyBudsClient.Platform/Interfaces` defines `IPlatformImplCreator`, which produces
+  `IBluetoothService`, `IDesktopServices`, hotkeys, media keys and so on.
+  - `GalaxyBudsClient/Platform/PlatformImpl.cs` picks the desktop implementation (`Platform.Linux` via BlueZ D-Bus,
+    `Platform.OSX`, `Platform.Windows` / `Platform.WindowsRT`) from the compile constants. Missing pieces fall back to `Stubs/`.
+  - Mobile heads inject their own implementation with `PlatformImpl.InjectExternalBackend(...)` (see `GalaxyBudsClient.Android/MainActivity.cs`).
+    An iOS head would do the same.
+- **Bluetooth flow:** `Platform/BluetoothImpl.cs` wraps the platform `IBluetoothService`. That service only connects an RFCOMM
+  socket to the device spec's service UUID (`Constants.Uuids`; newer Buds use `SppNew`) and raises
+  `NewDataAvailable(byte[])`. `BluetoothImpl` splits the bytes into `SppMessage` frames, and
+  `SppMessageReceiver` dispatches decoded messages as typed events that the view models subscribe to.
+- **Messages:** each message ID (`MsgIds` in `Message/SppMessageEnums.cs`) has a decoder class marked
+  `[MessageDecoder(MsgIds.X)]` in `Message/Decoder/` and/or an encoder marked `[MessageEncoder(MsgIds.X)]`. The
+  incremental generator in `GalaxyBudsClient.Generators/Messages` builds the factory that maps IDs to these classes,
+  so you add a message by adding a class with the attribute. The same project also generates `[CompiledEnum]`
+  helpers and localization keys.
+  - **Frame format** (Buds+ and newer): `0xFD | u16le size (low 10 bits; flag bits above) | id | payload | crc16le | 0xDD`.
+  - **Checksum:** CRC-16/XMODEM over the id and payload (`Utils/Crc16.cs`).
+  - **Legacy framing:** the 2019 Buds use a different start byte (`0xFE`) and a 2-byte type/size header.
+  - Protocol notes are in `GalaxyBudsRFCommProtocol.md`.
+- **Device differences:** each model has an `IDeviceSpec` in `Model/Specifications/`, which lists the `Features` it supports.
+  Code checks `DeviceSpec.Supports(Features.X)`. Decoder properties carry `[Device(Models.X, Selector.GreaterEqual)]`
+  to mark which models a field applies to.
+- **Vendored libraries:**
+  - `InTheHand.Net.Personal.Core`: Bluetooth sockets for Windows and Android.
+  - `ThePBone.BlueZNet`: BlueZ over D-Bus.
+  - `ThePBone.MprisClient`: Linux media control.
+- **`scripts/`:** example C# hook scripts that the app loads at runtime from its data folder. They aren't part of the build.
+
+## iOS port (`ios/BudsBridge/`)
+
+iOS gives apps no RFCOMM access, so the port depends on a jailbreak (rootless/Dopamine) and has two native parts.
+Both are built on Linux or WSL2, without Xcode:
+
+- **`src/budsrfcomm.m`:** a command-line client and TCP↔RFCOMM bridge (`list`, `probe <MAC> [-c ch]`, `serve <MAC> -c ch -p 8762`).
+  It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
+- **`tweak/BudsBridge.m`:** an ElleKit tweak injected into `bluetoothd`. On iOS 15.8.8 the daemon's
+  open/close-RFCOMM handlers are stubs. The tweak hooks them and opens the channel with `bluetoothd`'s internal
+  `OI_RFCOMM_*` functions, then hands data to the client through a socketpair.
+  - **All addresses are hardcoded for one binary:** `bluetoothd` from iOS 15.8.8 (19H422), LC_UUID `B69B9F42-F0B0-3697-8707-1CF0466942C4`.
+    The tweak refuses to hook any other build.
+  - Every address and signature, and how each was found, is in `research/NOTES.md`. Update that file whenever addresses or assumptions change.
+
+Build it as below. The output goes to `build/`. Commit the resulting `.deb` to `dist/` and remove the old one.
+
+```bash
+make -C ios/BudsBridge package SDK=/path/to/iPhoneOS15.6.sdk LDID=/path/to/ldid
+```
+
+Bump the version in both `layout/DEBIAN/control` and `BB_VERSION` in `src/budsrfcomm.m` when shipping a new `.deb`.
+
+Rules that came out of on-device testing:
+- `-[CBClassicManager connectPeer:options:]` crashes if `options` is nil. Pass `@{}`.
+- The tweak must locate `bluetoothd` by image path, not by dyld index 0.
+- Never take the Bluetooth stack lock from inside an `OI_RFCOMM` callback. They already run with it held, so the tweak
+  bounces all work onto its own serial queue.
+
+Verified on device: an iPhone 7 on 15.8.8 talks to Galaxy Buds3 Pro on RFCOMM **channel 20**.
+The next planned step is an iOS app head (Avalonia.iOS) whose `IBluetoothService` connects to `budsrfcomm serve` on `127.0.0.1`.

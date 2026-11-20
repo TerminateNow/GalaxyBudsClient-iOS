@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #include <os/log.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -333,11 +334,43 @@ __attribute__((constructor)) static void BudsBridgeInit(void) {
         LOG("disabled by BudsBridge.disable");
         return;
     }
-    gSlide = (uintptr_t)_dyld_get_image_vmaddr_slide(0);
-    if (!CheckString(A_STR_OPEN, "handleOpenRFCOMMChannel rfcommChannelID: %lld") ||
+    // Locate bluetoothd's own image (don't assume it is image 0) and read its LC_UUID / __TEXT size.
+    const struct mach_header_64 *mh = NULL; uint32_t idx = 0; const char *name = "?";
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *n = _dyld_get_image_name(i);
+        size_t ln = n ? strlen(n) : 0;
+        if (ln >= 11 && strcmp(n + ln - 11, "/bluetoothd") == 0) {
+            mh = (const struct mach_header_64 *)_dyld_get_image_header(i); idx = i; name = n; break;
+        }
+    }
+    if (!mh) { LOG("bluetoothd image not found - not hooking"); return; }
+    uint8_t uuid[16] = {0}; uint64_t textSize = 0;
+    const struct load_command *lc = (const struct load_command *)(mh + 1);
+    for (uint32_t i = 0; i < mh->ncmds; i++) {
+        if (lc->cmd == LC_UUID) memcpy(uuid, ((const struct uuid_command *)lc)->uuid, 16);
+        if (lc->cmd == LC_SEGMENT_64 && strcmp(((const struct segment_command_64 *)lc)->segname, "__TEXT") == 0)
+            textSize = ((const struct segment_command_64 *)lc)->vmsize;
+        lc = (const struct load_command *)((const uint8_t *)lc + lc->cmdsize);
+    }
+    gSlide = (uintptr_t)mh - 0x100000000ULL;
+    char uuidStr[37];
+    snprintf(uuidStr, sizeof uuidStr, "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+             uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9],
+             uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]);
+    LOG("bluetoothd image %u %{public}s header %p slide 0x%lx (dyld slide 0x%lx) uuid %{public}s", idx, name, mh,
+        (unsigned long)gSlide, (unsigned long)_dyld_get_image_vmaddr_slide(idx), uuidStr);
+
+    if (strcmp(uuidStr, "B69B9F42-F0B0-3697-8707-1CF0466942C4") != 0 ||
+        !CheckString(A_STR_OPEN, "handleOpenRFCOMMChannel rfcommChannelID: %lld") ||
         !CheckString(A_STR_CLOSE, "handleCloseRFCOMMChannel rfcommChannelID: %lld") ||
         !CheckString(A_STR_OPENED, "RFCOMM Channel connected: result: 0x%x")) {
-        LOG("unsupported bluetoothd build (expected iOS 15.8.8 19H422) - not hooking");
+        // Diagnostics: where is the string actually?
+        const char *needle = "handleOpenRFCOMMChannel rfcommChannelID: %lld";
+        void *found = textSize ? memmem(mh, (size_t)textSize, needle, strlen(needle)) : NULL;
+        LOG("unsupported bluetoothd build (expected uuid B69B9F42-F0B0-3697-8707-1CF0466942C4, iOS 15.8.8 19H422) - "
+            "not hooking. open string expected at +0x%llx, found at +0x%lx",
+            (unsigned long long)(A_STR_OPEN - 0x100000000ULL),
+            found ? (unsigned long)((uintptr_t)found - (uintptr_t)mh) : 0UL);
         return;
     }
     static const uint8_t openPrologue[] = {0xff, 0xc3, 0x02, 0xd1, 0xf6, 0x57, 0x08, 0xa9};

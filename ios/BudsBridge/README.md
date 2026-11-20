@@ -17,15 +17,15 @@ The package has two parts:
 > On any other build it logs `unsupported bluetoothd build` and does nothing.
 
 Status: on an iPhone 7 running 15.8.8 with Galaxy Buds3 Pro, the classic session and the connect step are confirmed working.
-The tweak (0.2.0) has not been tested on a device yet.
+The tweak (0.2.1) has not been tested on a device yet.
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.2.0_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.2.1_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.2.0_iphoneos-arm64.deb
+   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.2.1_iphoneos-arm64.deb
    ```
 
 3. Restart `bluetoothd` so it loads the tweak. Bluetooth drops for a few seconds and then reconnects.

@@ -20,7 +20,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define BB_VERSION "0.2.0"
+#define BB_VERSION "0.2.1"
 
 static const long long kManagerPoweredOn = 5;     // CBManagerStatePoweredOn
 static const long long kPeerConnected = 2;         // CBClassicPeer state "connected"

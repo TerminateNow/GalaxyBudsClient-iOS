@@ -1,0 +1,423 @@
+// budsrfcomm - RFCOMM access to Galaxy Buds on a jailbroken iOS 15 device.
+//
+// Uses the private CoreBluetooth "classic" API (CBClassicManager / CBClassicPeer /
+// CBRFCOMMChannel) that bluetoothd exposes to entitled clients. No bluetoothd hooks.
+//
+//   budsrfcomm list                          paired classic devices + Samsung SPP channels
+//   budsrfcomm probe <MAC> [opts]            open the SPP channel and hex-dump what the buds send
+//   budsrfcomm serve <MAC> [opts]            TCP <-> RFCOMM bridge on 127.0.0.1 (for the app)
+
+#import "PrivateCoreBluetooth.h"
+#include <arpa/inet.h>
+#include <errno.h>
+#include <getopt.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+#define BB_VERSION "0.1.0"
+
+static const long long kManagerPoweredOn = 5;     // CBManagerStatePoweredOn
+static const long long kPeerConnected = 2;         // CBClassicPeer state "connected"
+
+// Service UUIDs used by Galaxy Buds (GalaxyBudsClient/Model/Constants.cs)
+static NSArray<NSString *> *KnownUUIDs(void) {
+    return @[
+        @"2e73a4ad-332d-41fc-90e2-16bef06523f2", // SppNew      (Buds2 and newer, incl. Buds3 Pro)
+        @"00001102-0000-1000-8000-00805f9b34fd", // SppLegacy   (Buds 2019)
+        @"00001101-0000-1000-8000-00805f9b34fb", // SppStandard
+        @"f8620674-a1ed-41ab-a8b9-de9ad655729d", // SmepSpp     (alternative mode)
+    ];
+}
+
+static BOOL gVerbose = NO;
+static dispatch_queue_t gCBQueue;
+
+#pragma mark - Logging / helpers
+
+static void BBLog(const char *fmt, ...) {
+    struct timeval tv; gettimeofday(&tv, NULL);
+    struct tm tm; localtime_r(&tv.tv_sec, &tm);
+    fprintf(stderr, "[%02d:%02d:%02d.%03d] ", tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(tv.tv_usec / 1000));
+    va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+    fputc('\n', stderr);
+}
+
+static void HexDump(const char *prefix, const uint8_t *buf, size_t len) {
+    for (size_t off = 0; off < len; off += 16) {
+        char hex[16 * 3 + 1] = {0}, asc[17] = {0};
+        for (size_t i = 0; i < 16 && off + i < len; i++) {
+            uint8_t c = buf[off + i];
+            snprintf(hex + i * 3, 4, "%02x ", c);
+            asc[i] = (c >= 32 && c < 127) ? (char)c : '.';
+        }
+        fprintf(stdout, "%s %04zx  %-48s %s\n", prefix, off, hex, asc);
+    }
+    fflush(stdout);
+}
+
+// Run a block on the CoreBluetooth queue and wait for it.
+static void OnCB(dispatch_block_t block) { dispatch_sync(gCBQueue, block); }
+
+// Poll a condition (evaluated on the CB queue) until true or timeout.
+static BOOL WaitFor(double seconds, BOOL (^cond)(void)) {
+    double waited = 0;
+    while (waited < seconds) {
+        __block BOOL ok = NO;
+        OnCB(^{ ok = cond(); });
+        if (ok) return YES;
+        usleep(50 * 1000);
+        waited += 0.05;
+    }
+    return NO;
+}
+
+static NSString *NormalizeMAC(NSString *mac) {
+    return [[mac stringByReplacingOccurrencesOfString:@"-" withString:@":"] uppercaseString];
+}
+
+static NSData *ParseHex(const char *s) {
+    NSMutableData *d = [NSMutableData data];
+    int hi = -1;
+    for (; *s; s++) {
+        int v;
+        if (*s >= '0' && *s <= '9') v = *s - '0';
+        else if (*s >= 'a' && *s <= 'f') v = *s - 'a' + 10;
+        else if (*s >= 'A' && *s <= 'F') v = *s - 'A' + 10;
+        else continue; // allow spaces, colons, etc.
+        if (hi < 0) hi = v;
+        else { uint8_t b = (uint8_t)(hi << 4 | v); [d appendBytes:&b length:1]; hi = -1; }
+    }
+    return hi < 0 ? d : nil;
+}
+
+#pragma mark - Galaxy Buds frame decoding (display only)
+
+// CRC-16/XMODEM (poly 0x1021, init 0) - same as GalaxyBudsClient/Utils/Crc16.cs
+static uint16_t Crc16(const uint8_t *p, size_t n) {
+    uint16_t crc = 0;
+    while (n--) {
+        crc ^= (uint16_t)(*p++) << 8;
+        for (int i = 0; i < 8; i++) crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+    }
+    return crc;
+}
+
+static const char *MsgName(uint8_t id) {
+    switch (id) {
+        case 0x60: return "STATUS_UPDATED";
+        case 0x61: return "EXTENDED_STATUS_UPDATED";
+        case 0x88: return "MANAGER_INFO";
+        default: return "";
+    }
+}
+
+// Buds+ and newer framing: FD | size:u16le (low 10 bits) | id | payload | crc16le | DD
+static void DecodeFrames(NSMutableData *buf) {
+    for (;;) {
+        const uint8_t *b = buf.bytes; size_t n = buf.length;
+        size_t start = 0;
+        while (start < n && b[start] != 0xFD) start++;
+        if (start) { [buf replaceBytesInRange:NSMakeRange(0, start) withBytes:NULL length:0]; continue; }
+        if (n < 4) return;
+        size_t size = (b[1] | (b[2] << 8)) & 0x3FF;
+        size_t total = 1 + 2 + size + 1;
+        if (size < 3) { [buf replaceBytesInRange:NSMakeRange(0, 1) withBytes:NULL length:0]; continue; }
+        if (n < total) return;
+        if (b[total - 1] != 0xDD) { [buf replaceBytesInRange:NSMakeRange(0, 1) withBytes:NULL length:0]; continue; }
+        uint8_t id = b[3];
+        const uint8_t *payload = b + 4; size_t plen = size - 3;
+        uint16_t want = (uint16_t)(payload[plen] | (payload[plen + 1] << 8));
+        uint16_t got = Crc16(b + 3, 1 + plen);
+        BOOL isResponse = (b[2] & 0x10) != 0;
+        printf(">> frame id=0x%02x (%d) %s %s len=%zu crc=%s\n", id, id, MsgName(id),
+               isResponse ? "[response]" : "", plen, want == got ? "ok" : "BAD");
+        if (id == 0x61 && plen >= 4)
+            printf(">> battery: left=%d%% right=%d%% (revision %d)\n", payload[2], payload[3], payload[0]);
+        fflush(stdout);
+        [buf replaceBytesInRange:NSMakeRange(0, total) withBytes:NULL length:0];
+    }
+}
+
+#pragma mark - CoreBluetooth classic session
+
+@interface BBSession : NSObject
+@property (strong) id<BBClassicManager> manager;
+@property (strong) id<BBClassicPeer> peer;
+@property (strong) id<BBRFCOMMChannel> channel;
+@property unsigned char channelID;
+@property BOOL channelDone;        // open attempt finished (success or failure)
+@property NSInteger channelError;
+@property BOOL channelClosed;
+@end
+@implementation BBSession @end
+
+static const char *ManagerStateName(long long s) {
+    static const char *names[] = {"unknown", "resetting", "unsupported", "unauthorized", "poweredOff", "poweredOn"};
+    return (s >= 0 && s <= 5) ? names[s] : "?";
+}
+
+static BOOL StartManager(BBSession *s) {
+    Class cls = NSClassFromString(@"CBClassicManager");
+    if (!cls) { BBLog("CBClassicManager class not found - is this iOS 15?"); return NO; }
+    OnCB(^{ s.manager = [(id<BBClassicManager>)[cls alloc] initWithQueue:gCBQueue options:nil]; });
+    if (!WaitFor(10, ^{ return (BOOL)(s.manager.state == kManagerPoweredOn); })) {
+        __block long long st = 0; OnCB(^{ st = s.manager.state; });
+        BBLog("Bluetooth manager not ready: state=%lld (%s)", st, ManagerStateName(st));
+        if (st == 3) BBLog("unauthorized: entitlements were rejected - check `ldid -e $(which budsrfcomm)`");
+        if (st == 4) BBLog("Bluetooth is off - turn it on");
+        return NO;
+    }
+    if (gVerbose) BBLog("manager powered on");
+    return YES;
+}
+
+static void PrintPeer(id<BBClassicPeer> p) {
+    printf("%-17s  %-28s state=%lld  id=%s\n", p.addressString.UTF8String ?: "?", p.name.UTF8String ?: "(no name)",
+           p.state, p.identifier.UUIDString.UTF8String);
+    for (NSString *u in KnownUUIDs()) {
+        CBUUID *uuid = [CBUUID UUIDWithString:u];
+        BOOL sup = [p isRFCOMMServiceSupported:uuid];
+        unsigned char ch = [p rfcommChannelIDForService:uuid];
+        if (sup || ch) printf("    service %s  rfcomm channel %u\n", u.UTF8String, ch);
+    }
+    if (gVerbose) printf("    services: %s\n", p.services.description.UTF8String ?: "(none)");
+}
+
+static BOOL FindPeer(BBSession *s, NSString *mac) {
+    NSString *want = NormalizeMAC(mac);
+    OnCB(^{
+        for (id<BBClassicPeer> p in [s.manager retrievePairedPeersWithOptions:nil] ?: @[])
+            if ([NormalizeMAC(p.addressString ?: @"") isEqualToString:want]) { s.peer = p; return; }
+        s.peer = [s.manager retrievePeerWithAddress:want];
+    });
+    if (!s.peer) { BBLog("no device with address %s (is it paired?)", want.UTF8String); return NO; }
+    BBLog("device: %s (%s)", s.peer.name.UTF8String ?: "?", want.UTF8String);
+    return YES;
+}
+
+static BOOL ConnectPeer(BBSession *s) {
+    __block BOOL already = NO;
+    OnCB(^{ already = s.peer.state == kPeerConnected; });
+    if (already) { if (gVerbose) BBLog("peer already connected in this session"); return YES; }
+
+    __block BOOL done = NO; __block NSInteger err = 0;
+    NSUUID *pid = s.peer.identifier;
+    OnCB(^{
+        s.manager.connectCallback = ^(id<BBClassicPeer> p, NSInteger code) {
+            if (p && ![p.identifier isEqual:pid]) return;
+            err = code; done = YES;
+        };
+        [s.manager connectPeer:s.peer options:nil];
+    });
+    BBLog("connecting to device (make sure the buds are out of the case)...");
+    if (!WaitFor(20, ^{ return done; })) { BBLog("timed out waiting for connection"); return NO; }
+    if (err) { BBLog("connection failed: error %ld", (long)err); return NO; }
+    BBLog("device connected");
+    return YES;
+}
+
+static BOOL ResolveChannel(BBSession *s, int forced, NSString *uuidOverride) {
+    if (forced > 0) { s.channelID = (unsigned char)forced; return YES; }
+    NSArray *uuids = uuidOverride ? @[uuidOverride] : KnownUUIDs();
+    __block unsigned char ch = 0; __block NSString *which = nil;
+    OnCB(^{
+        for (NSString *u in uuids) {
+            ch = [s.peer rfcommChannelIDForService:[CBUUID UUIDWithString:u]];
+            if (ch) { which = u; break; }
+        }
+    });
+    if (!ch) {
+        BBLog("could not find the Samsung SPP service in the device's SDP record");
+        OnCB(^{ BBLog("known services: %s", s.peer.services.description.UTF8String ?: "(none)"); });
+        BBLog("pass the RFCOMM channel explicitly with -c <channel>");
+        return NO;
+    }
+    BBLog("service %s -> rfcomm channel %u", which.UTF8String, ch);
+    s.channelID = ch;
+    return YES;
+}
+
+static BOOL OpenChannel(BBSession *s) {
+    s.channelDone = NO; s.channelClosed = NO; s.channel = nil; s.channelError = 0;
+    __weak BBSession *ws = s;
+    OnCB(^{
+        s.peer.connectRFCOMMCallback = ^(id<BBRFCOMMChannel> ch, NSInteger code) {
+            BBSession *ss = ws; if (!ss || ss.channelDone) return;
+            if (ch && ch.channelID != ss.channelID) return;
+            ss.channel = ch; ss.channelError = code; ss.channelDone = YES;
+        };
+        s.peer.disconnectRFCOMMCallback = ^(id<BBRFCOMMChannel> ch, NSInteger code) {
+            BBSession *ss = ws; if (!ss) return;
+            if (ch && ch.channelID != ss.channelID) return;
+            BBLog("rfcomm channel closed by bluetoothd (code %ld)", (long)code);
+            ss.channelClosed = YES;
+        };
+        [s.peer openRFCOMMChannel:s.channelID];
+    });
+    BBLog("opening rfcomm channel %u...", s.channelID);
+    if (!WaitFor(15, ^{ return ws.channelDone; })) { BBLog("timed out opening channel"); return NO; }
+    if (!s.channel || s.channelError) { BBLog("open failed: error %ld", (long)s.channelError); return NO; }
+    BBLog("rfcomm channel open: fd=%d mtu=%u", s.channel.socketFD, s.channel.mtu);
+    return YES;
+}
+
+static void CloseChannel(BBSession *s) {
+    if (!s.channel) return;
+    OnCB(^{ [s.peer closeRFCOMMChannel:s.channelID]; });
+    WaitFor(3, ^{ return s.channelClosed; });
+    s.channel = nil;
+}
+
+static BOOL WriteAll(int fd, const uint8_t *p, size_t n) {
+    while (n) {
+        ssize_t w = write(fd, p, n);
+        if (w < 0) { if (errno == EINTR || errno == EAGAIN) { usleep(1000); continue; } return NO; }
+        p += w; n -= (size_t)w;
+    }
+    return YES;
+}
+
+#pragma mark - Commands
+
+static int CmdList(void) {
+    BBSession *s = [BBSession new];
+    if (!StartManager(s)) return 2;
+    __block NSArray *peers;
+    OnCB(^{ peers = [s.manager retrievePairedPeersWithOptions:nil]; });
+    if (!peers.count) { BBLog("no paired classic devices"); return 1; }
+    OnCB(^{ for (id<BBClassicPeer> p in peers) PrintPeer(p); });
+    return 0;
+}
+
+static int CmdProbe(NSString *mac, int channel, NSString *uuid, NSData *send, int seconds) {
+    BBSession *s = [BBSession new];
+    if (!StartManager(s) || !FindPeer(s, mac) || !ConnectPeer(s) || !ResolveChannel(s, channel, uuid) || !OpenChannel(s))
+        return 2;
+    int fd = s.channel.socketFD;
+    if (send.length) {
+        HexDump("<<", send.bytes, send.length);
+        if (!WriteAll(fd, send.bytes, send.length)) BBLog("write failed: %s", strerror(errno));
+    }
+    BBLog("listening for %d s (the buds normally send EXTENDED_STATUS_UPDATED right away)...", seconds);
+    NSMutableData *frames = [NSMutableData data];
+    uint8_t buf[4096]; size_t total = 0;
+    time_t end = time(NULL) + seconds;
+    while (time(NULL) < end && !s.channelClosed) {
+        struct pollfd pfd = {fd, POLLIN, 0};
+        int r = poll(&pfd, 1, 250);
+        if (r < 0 && errno != EINTR) break;
+        if (r <= 0) continue;
+        ssize_t n = read(fd, buf, sizeof buf);
+        if (n <= 0) { BBLog("socket closed (%s)", n < 0 ? strerror(errno) : "eof"); break; }
+        total += (size_t)n;
+        HexDump(">>", buf, (size_t)n);
+        [frames appendBytes:buf length:(size_t)n];
+        DecodeFrames(frames);
+    }
+    BBLog("received %zu bytes total", total);
+    CloseChannel(s);
+    return total ? 0 : 1;
+}
+
+static int CmdServe(NSString *mac, int channel, NSString *uuid, int port) {
+    BBSession *s = [BBSession new];
+    if (!StartManager(s) || !FindPeer(s, mac)) return 2;
+
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    int one = 1; setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in sa = {.sin_len = sizeof sa, .sin_family = AF_INET, .sin_port = htons((uint16_t)port)};
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(lfd, (struct sockaddr *)&sa, sizeof sa) || listen(lfd, 1)) {
+        BBLog("cannot listen on 127.0.0.1:%d: %s", port, strerror(errno)); return 2;
+    }
+    BBLog("bridge listening on 127.0.0.1:%d - each TCP client gets a fresh rfcomm channel", port);
+
+    for (;;) {
+        int cfd = accept(lfd, NULL, NULL);
+        if (cfd < 0) { if (errno == EINTR) continue; BBLog("accept: %s", strerror(errno)); return 2; }
+        setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+        BBLog("client connected");
+        if (!ConnectPeer(s) || !ResolveChannel(s, channel, uuid) || !OpenChannel(s)) {
+            BBLog("could not open rfcomm channel, dropping client");
+            close(cfd); continue;
+        }
+        int rfd = s.channel.socketFD;
+        uint8_t buf[4096];
+        for (;;) {
+            struct pollfd p[2] = {{cfd, POLLIN, 0}, {rfd, POLLIN, 0}};
+            int r = poll(p, 2, 500);
+            if (s.channelClosed) break;
+            if (r < 0) { if (errno == EINTR) continue; break; }
+            if (r == 0) continue;
+            if (p[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+                ssize_t n = read(cfd, buf, sizeof buf);
+                if (n <= 0) { BBLog("client disconnected"); break; }
+                if (gVerbose) HexDump("<<", buf, (size_t)n);
+                if (!WriteAll(rfd, buf, (size_t)n)) { BBLog("rfcomm write failed: %s", strerror(errno)); break; }
+            }
+            if (p[1].revents & (POLLIN | POLLHUP | POLLERR)) {
+                ssize_t n = read(rfd, buf, sizeof buf);
+                if (n <= 0) { BBLog("rfcomm socket closed"); break; }
+                if (gVerbose) HexDump(">>", buf, (size_t)n);
+                if (!WriteAll(cfd, buf, (size_t)n)) { BBLog("client write failed"); break; }
+            }
+        }
+        close(cfd);
+        CloseChannel(s);
+        BBLog("session ended, waiting for next client");
+    }
+}
+
+static void Usage(void) {
+    fprintf(stderr,
+        "budsrfcomm " BB_VERSION " - Galaxy Buds RFCOMM access for jailbroken iOS 15\n\n"
+        "usage:\n"
+        "  budsrfcomm [-v] list\n"
+        "  budsrfcomm [-v] probe <MAC> [-c channel] [-u uuid] [-s hex] [-t seconds]\n"
+        "  budsrfcomm [-v] serve <MAC> [-c channel] [-u uuid] [-p port]\n\n"
+        "  -c  RFCOMM channel number (default: looked up from the SDP record)\n"
+        "  -u  service UUID to look up (default: Samsung SPP UUIDs)\n"
+        "  -s  hex bytes to send after the channel opens (probe)\n"
+        "  -t  seconds to listen (probe, default 15)\n"
+        "  -p  TCP port for the bridge (serve, default 8762)\n"
+        "  -v  verbose\n");
+}
+
+int main(int argc, char **argv) {
+    @autoreleasepool {
+        signal(SIGPIPE, SIG_IGN);
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        gCBQueue = dispatch_queue_create("budsrfcomm.cb", DISPATCH_QUEUE_SERIAL);
+
+        int channel = 0, seconds = 15, port = 8762, opt;
+        NSString *uuid = nil; NSData *send = nil;
+        // allow options anywhere: collect non-option args manually
+        NSMutableArray<NSString *> *args = [NSMutableArray array];
+        while (optind < argc) {
+            if ((opt = getopt(argc, argv, "vc:u:s:t:p:h")) == -1) { [args addObject:@(argv[optind++])]; continue; }
+            switch (opt) {
+                case 'v': gVerbose = YES; break;
+                case 'c': channel = atoi(optarg); break;
+                case 'u': uuid = @(optarg); break;
+                case 's': send = ParseHex(optarg); if (!send) { BBLog("bad hex for -s"); return 64; } break;
+                case 't': seconds = atoi(optarg); break;
+                case 'p': port = atoi(optarg); break;
+                default: Usage(); return 64;
+            }
+        }
+        if (!args.count) { Usage(); return 64; }
+        NSString *cmd = args[0];
+        if ([cmd isEqualToString:@"list"]) return CmdList();
+        if (args.count < 2) { Usage(); return 64; }
+        if ([cmd isEqualToString:@"probe"]) return CmdProbe(args[1], channel, uuid, send, seconds);
+        if ([cmd isEqualToString:@"serve"]) return CmdServe(args[1], channel, uuid, port);
+        Usage();
+        return 64;
+    }
+}

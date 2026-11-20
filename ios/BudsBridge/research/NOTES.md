@@ -107,3 +107,28 @@ CoreBluetooth is compiled out of iOS `bluetoothd`**, while the client side in Co
 
 Plan: an ElleKit tweak loaded into `bluetoothd` that calls this internal connect with its own callback table and
 forwards data to a local socket. `budsrfcomm` stays as the client and CLI.
+
+## bluetoothd internals used by the tweak (19H422, unslid addresses)
+
+Recovered with Ghidra 11.4.2 headless and cross-checked against call sites in the disassembly.
+
+| Address | What | Signature / notes |
+|---|---|---|
+| `0x1001b0988` | `CBClassicSession::handleOpenRFCOMMChannel` | `(session, xpc msg)`. Returned as a member-function pointer from the message switch at `0x1001acc94`. **Hooked.** |
+| `0x1001b0b4c` | `CBClassicSession::handleCloseRFCOMMChannel` | `(session, xpc msg)`. Also dispatches an empty block (`0x10071f290`). **Hooked.** |
+| `0x1001b58c4` | report RFCOMM opened | `(session, NSUUID*, result, channel, mtu, linkHandle, isIncoming, fd)`. Sends msg `0x38` with `kCBMsgArgSocket` set through `xpc_dictionary_set_fd`. |
+| `0x1001b5be0` | report RFCOMM closed | `(session, NSUUID*, result, channel, linkHandle)`. Sends msg `0x39`. |
+| `0x1004e62bc` | NSUUID to BD_ADDR | `(uuidMap, NSUUID*, 0)` returns a 48-bit address. The map is global `0x100750b20` (`dispatch_once` `0x100750b28`, block `0x10071f390`). |
+| `0x10034f168` | address to device | `(deviceManager, addr48, create)` returns a device with its 6-byte BD_ADDR at `+0x40`. The manager is global `0x100750b40` (once `0x100750b48`, block `0x10071f3b0`). |
+| `0x100183bf8` | `OI_RFCOMM_Connect` | `(connectCfm, callbacks[5], bdaddr*, channel 1..30, frameSize, bufferSize, u16 *outHandle, policy*)`. Credits = bufferSize / frameSize. Braille uses `0x3ef`, `0x3b01` and policy `0x1005d5da8`. |
+| `0x100183bec` | `OI_RFCOMM_Write` wrapper | `(writeCfm, handle, data, len)`. Sets mbuf mode 2, which **wraps** the buffer (no copy), so the buffer must stay valid until `writeCfm`. |
+| `0x10018422c` | `OI_RFCOMM_Disconnect` | `(handle, reason)` |
+| `0x100072bc4` / `0x100072c60` | stack lock / unlock | `pthread_mutex` at `0x100757528`. Callbacks run with the lock held, so never call it from inside one. |
+
+Callback signatures, from their call sites in the RFCOMM module:
+
+- connect confirm (`link+0x48`): `(u16 handle, u16 frameSize, status)`
+- `callbacks[0]` disconnect: `(handle, reason)`
+- `callbacks[1]` receive: `(handle, data*, len)`. The data is only valid during the call.
+- write confirm: `(handle, data*, len, status)`
+- `callbacks[2..4]` are optional (line status, among others) and are passed as NULL, as Braille does.

@@ -16,17 +16,25 @@ CFLAGS   := -target arm64-apple-ios15.0 -isysroot $(SDK) -fobjc-arc -O2 -Wall -W
 LDFLAGS  := -target arm64-apple-ios15.0 -isysroot $(SDK) -fuse-ld=lld --ld-path=$(LD64) \
             -framework Foundation -framework CoreBluetooth
 
-all: build/budsrfcomm
+TWEAKDIR := /var/jb/Library/MobileSubstrate/DynamicLibraries
+
+all: build/budsrfcomm build/BudsBridge.dylib
 
 build/budsrfcomm: src/budsrfcomm.m src/PrivateCoreBluetooth.h entitlements.plist
 	@mkdir -p build
 	$(CLANG) $(CFLAGS) $(LDFLAGS) -o $@ src/budsrfcomm.m
 	$(LDID) -Sentitlements.plist $@
 
-package: build/budsrfcomm
-	rm -rf build/pkg && mkdir -p build/pkg$(PREFIX)
+build/BudsBridge.dylib: tweak/BudsBridge.m
+	@mkdir -p build
+	$(CLANG) $(CFLAGS) $(LDFLAGS) -dynamiclib -install_name $(TWEAKDIR)/BudsBridge.dylib -o $@ tweak/BudsBridge.m
+	$(LDID) -S $@
+
+package: build/budsrfcomm build/BudsBridge.dylib
+	rm -rf build/pkg && mkdir -p build/pkg$(PREFIX) build/pkg$(TWEAKDIR)
 	cp -r layout/DEBIAN build/pkg/
 	cp build/budsrfcomm build/pkg$(PREFIX)/
+	cp build/BudsBridge.dylib tweak/BudsBridge.plist build/pkg$(TWEAKDIR)/
 	dpkg-deb -Zgzip --root-owner-group -b build/pkg build/$(PKG)_$(VERSION)_iphoneos-arm64.deb
 
 clean:

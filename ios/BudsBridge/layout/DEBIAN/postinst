@@ -1,0 +1,8 @@
+#!/var/jb/bin/sh
+# (Re)load the budsrfcomm bridge daemon.
+PLIST=/var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist
+if [ "$1" = "configure" ]; then
+    launchctl unload "$PLIST" >/dev/null 2>&1 || true
+    launchctl load -w "$PLIST" >/dev/null 2>&1 || true
+fi
+exit 0

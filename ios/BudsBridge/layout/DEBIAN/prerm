@@ -1,0 +1,9 @@
+#!/var/jb/bin/sh
+# Stop the budsrfcomm bridge daemon before removal or upgrade.
+PLIST=/var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist
+case "$1" in
+    remove|upgrade|deconfigure)
+        launchctl unload "$PLIST" >/dev/null 2>&1 || true
+        ;;
+esac
+exit 0

@@ -83,8 +83,11 @@ so what compiles depends on where you build.
 iOS gives apps no RFCOMM access, so the port depends on a jailbreak (rootless/Dopamine) and has two native parts.
 Both are built on Linux or WSL2, without Xcode:
 
-- **`src/budsrfcomm.m`:** a command-line client and TCP↔RFCOMM bridge (`list`, `probe <MAC> [-c ch]`, `serve <MAC> -c ch -p 8762`).
+- **`src/budsrfcomm.m`:** a command-line client and TCP↔RFCOMM bridge (`list`, `probe`, `serve`, `daemon`).
   It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
+  - `daemon` runs from launchd (`launchd/com.galaxybudsclient.budsrfcomm.plist`, as `mobile`, loaded by `layout/DEBIAN/postinst`).
+  - It serves a line protocol on `127.0.0.1:8762`: `PING`, `LIST`, and `CONNECT <MAC> [ch]`, which answers `OK <ch>` and then passes raw bytes.
+    The protocol is documented in `ios/BudsBridge/README.md`. **This is the interface the iOS app's `IBluetoothService` must speak.**
 - **`tweak/BudsBridge.m`:** an ElleKit tweak injected into `bluetoothd`. On iOS 15.8.8 the daemon's
   open/close-RFCOMM handlers are stubs. The tweak hooks them and opens the channel with `bluetoothd`'s internal
   `OI_RFCOMM_*` functions, then hands data to the client through a socketpair.

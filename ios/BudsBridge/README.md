@@ -21,10 +21,7 @@ The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STA
 
 ## Install
 
-> `dist/` still holds 0.2.1, which has no background service. Build 0.3.0 with `make package` (see Build below)
-> and install that `.deb`.
-
-1. Copy `com.galaxybudsclient.budsrfcomm_0.3.0_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.3.0_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash

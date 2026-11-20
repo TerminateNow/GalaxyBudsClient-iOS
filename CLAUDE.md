@@ -114,5 +114,6 @@ Rules that came out of on-device testing:
   bounces all work onto its own serial queue.
 
 Verified on device: an iPhone 7 on 15.8.8 talks to Galaxy Buds3 Pro on RFCOMM **channel 20**.
-The 0.3.0 background service hasn't been built or tested on a device yet. `dist/` still holds 0.2.1.
+The 0.3.0 background service is built (`dist/`) but not yet tested on a device.
+Each cloud session starts without the SDK or `ldid`. Download them into the scratchpad first: `theos/sdks` (`iPhoneOS15.6.sdk`) and `ProcursusTeam/ldid` releases (`ldid_linux_x86_64`).
 The next planned step is an iOS app head (Avalonia.iOS) whose `IBluetoothService` connects to the service on `127.0.0.1:8762`.

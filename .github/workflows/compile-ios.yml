@@ -13,6 +13,7 @@ on:
       - 'GalaxyBudsClient.Generators/**'
       - 'global.json'
       - '.github/workflows/compile-ios.yml'
+      - '!**/*.md'
   workflow_dispatch:
 
 jobs:
@@ -39,11 +40,13 @@ jobs:
     - name: Install iOS workload
       run: dotnet workload install ios
 
+    # IsIOS=true must be global: like IsAndroid in GalaxyBudsClient.Android/build.sh, it doesn't
+    # reach the shared project through the ProjectReference's AdditionalProperties during restore
     - name: Restore dependencies
-      run: dotnet restore --configfile GalaxyBudsClient/nuget.config GalaxyBudsClient.iOS/GalaxyBudsClient.iOS.csproj
+      run: dotnet restore -p:IsIOS=true --configfile GalaxyBudsClient/nuget.config GalaxyBudsClient.iOS/GalaxyBudsClient.iOS.csproj
 
     - name: Build
-      run: dotnet publish GalaxyBudsClient.iOS/GalaxyBudsClient.iOS.csproj -c Release --no-restore -p:ValidateXcodeVersion=false
+      run: dotnet publish GalaxyBudsClient.iOS/GalaxyBudsClient.iOS.csproj -c Release --no-restore -p:IsIOS=true -p:ValidateXcodeVersion=false
 
     - name: Package
       run: |

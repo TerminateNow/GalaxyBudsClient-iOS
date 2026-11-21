@@ -10,7 +10,7 @@ iOS gives apps no RFCOMM access, so all Bluetooth traffic goes through the BudsB
 - `Impl/BridgeBluetoothService.cs` is the `IBluetoothService`. It connects to `127.0.0.1:8762` and speaks the
   bridge protocol: `LIST` for the paired devices, `CONNECT <MAC>` for a raw RFCOMM stream. The service picks the channel.
   The port is read from the bridge's settings file if it was changed there.
-- The shared project is built with `IsIOS=true`: a library with the `iOS` define. Scripting, developer tools and the other
+- The shared project is built with `IsIOS=true`, passed globally to restore and publish (`-p:IsIOS=true`; the project reference alone doesn't carry it through restore, the same issue `GalaxyBudsClient.Android/build.sh` works around): a library with the `iOS` define. Scripting, developer tools and the other
   desktop-only parts are left out, as on Android.
 - iOS suspends the app in the background, so the connection drops when you leave the app and reconnects when you come back.
 

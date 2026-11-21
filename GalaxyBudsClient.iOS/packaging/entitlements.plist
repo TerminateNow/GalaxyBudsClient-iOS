@@ -8,6 +8,10 @@
 	<true/>
 	<key>com.apple.private.security.no-container</key>
 	<true/>
+	<!-- Without this, the app still gets a sandbox profile that denies opening the GPU
+	     (IOServiceOpen on IOAccelerator returns kIOReturnNotPermitted), so neither Metal nor OpenGL starts -->
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
 	<key>com.apple.private.skip-library-validation</key>
 	<true/>
 	<key>get-task-allow</key>

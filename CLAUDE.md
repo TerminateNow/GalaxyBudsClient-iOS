@@ -119,4 +119,11 @@ Rules that came out of on-device testing:
 Verified on device: an iPhone 7 on 15.8.8 talks to Galaxy Buds3 Pro on RFCOMM **channel 20**.
 The 0.3.1 background service (`PING`, `LIST`, `CONNECT`, saved settings, launchd) is also verified on that device.
 Each cloud session starts without the SDK or `ldid`. Download them into the scratchpad first: `theos/sdks` (`iPhoneOS15.6.sdk`) and `ProcursusTeam/ldid` releases (`ldid_linux_x86_64`).
-The next planned step is an iOS app head (Avalonia.iOS) whose `IBluetoothService` connects to the service on `127.0.0.1:8762`.
+### iOS app head (`GalaxyBudsClient.iOS/`)
+
+An Avalonia.iOS head, like the Android one. It references the shared project with `IsIOS=true` (a library with the `iOS` define;
+code that's `#if !Android` for scripting and developer tools is also `!iOS`). Its `Impl/BridgeBluetoothService.cs` speaks the
+bridge protocol on `127.0.0.1:8762`. It builds only on macOS with Xcode, so `.github/workflows/compile-ios.yml` builds it unsigned
+on a macOS runner and `packaging/package.sh` fakesigns it with `ldid` into a rootless `.deb` (`/var/jb/Applications/GalaxyBudsManager.app`).
+You can check that the shared project still compiles for iOS on Linux with `dotnet build -p:IsIOS=true GalaxyBudsClient/GalaxyBudsClient.csproj`.
+Details are in `GalaxyBudsClient.iOS/README.md`.

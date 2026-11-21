@@ -98,10 +98,12 @@ printf 'LIST\n' | nc 127.0.0.1 8762
 ```
 
 ```bash
-(printf 'CONNECT\n'; sleep 10) | nc 127.0.0.1 8762 | xxd | head
+(printf 'CONNECT\n'; sleep 20) | timeout 25 nc 127.0.0.1 8762 > /tmp/buds.bin; xxd /tmp/buds.bin | head -20
 ```
 
-The last command should start with `OK 20` (shown in hex), followed by the Buds' frames.
+This takes 25 seconds, then prints a hex dump starting with `OK 20` (`4f4b 2032 30`), followed by the Buds' frames.
+The output goes to a file because `nc` doesn't exit on its own while the Buds stay connected, and `xxd` buffers its output in a pipe.
+The first `CONNECT` to a new device can take 20 seconds or more while it scans channels. Skip the scan with `budsrfcomm config <MAC> -c 20`.
 
 ### Turning the tweak off
 

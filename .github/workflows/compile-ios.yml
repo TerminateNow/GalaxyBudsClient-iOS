@@ -18,7 +18,8 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-26
+    # The .NET 11 iOS workload (SDK 27.2) needs Xcode 27.2, which only the xcode-27 image has
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v6
@@ -26,8 +27,8 @@ jobs:
     - name: Select Xcode
       run: |
         ls -d /Applications/Xcode*.app
-        XC=$(ls -d /Applications/Xcode_27.2*.app 2>/dev/null | head -1 || true)
-        [ -n "$XC" ] || XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+        XC=/Applications/Xcode_27.2.app
+        [ -d "$XC" ] || XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
         echo "Using $XC"
         sudo xcode-select -s "$XC/Contents/Developer"
         xcodebuild -version

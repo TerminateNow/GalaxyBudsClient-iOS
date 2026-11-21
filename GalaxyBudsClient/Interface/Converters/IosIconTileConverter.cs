@@ -3,6 +3,8 @@ using System.Globalization;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
+using GalaxyBudsClient.Generated.I18N;
+using GalaxyBudsClient.Model.Constants;
 using SymbolIconSource = FluentIcons.Avalonia.Fluent.SymbolIconSource;
 
 namespace GalaxyBudsClient.Interface.Converters;
@@ -34,7 +36,7 @@ public class IosIconTileConverter : IValueConverter
         ("Rename", Blue), ("Edit", Blue), ("Download", Blue), ("Cursor", Blue), ("Tag", Blue),
         ("Checkmark", Green), ("Play", Green), ("Flash", Green), ("Gauge", Green), ("Data", Green),
         ("Call", Green), ("Target", Green), ("Location", Green), ("Add", Green),
-        ("Tap", Orange), ("Hand", Orange), ("Timer", Orange), ("Hourglass", Orange), ("Lightbulb", Orange),
+        ("Temperature", Orange), ("Tap", Orange), ("Hand", Orange), ("Timer", Orange), ("Hourglass", Orange), ("Lightbulb", Orange),
         ("Keyboard", Orange), ("Toolbox", Orange), ("Wrench", Orange), ("Beaker", Orange), ("Badge", Orange),
         ("Mic", Purple), ("Person", Purple), ("Sound", Purple), ("Speaker", Purple), ("Cube", Purple),
         ("Compass", Purple), ("Headphones", Purple), ("Chat", Purple),
@@ -68,6 +70,35 @@ public class IosUpperCaseConverter : IValueConverter
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
         => value?.ToString()?.ToUpper(culture);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
+/// <summary>Names for the temperature unit choice in Settings.</summary>
+public class TemperatureUnitNameConverter : IValueConverter
+{
+    public static readonly TemperatureUnitNameConverter Instance = new();
+    public static readonly TemperatureUnits[] Units = [TemperatureUnits.Celsius, TemperatureUnits.Fahrenheit];
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value switch
+    {
+        TemperatureUnits.Celsius => Strings.IosCelsius,
+        TemperatureUnits.Fahrenheit => Strings.IosFahrenheit,
+        _ => value?.ToString()
+    };
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
+/// <summary>True when the value's text equals the converter parameter (iOS design checkmarks).</summary>
+public class IosEqualsConverter : IValueConverter
+{
+    public static readonly IosEqualsConverter Instance = new();
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => string.Equals(value?.ToString(), parameter?.ToString(), StringComparison.Ordinal);
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();

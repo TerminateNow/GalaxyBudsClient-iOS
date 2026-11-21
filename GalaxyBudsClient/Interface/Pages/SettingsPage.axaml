@@ -10,6 +10,7 @@
              xmlns:converters="clr-namespace:GalaxyBudsClient.Interface.Converters"
              xmlns:i18N="clr-namespace:GalaxyBudsClient.Generated.I18N"
              xmlns:config="clr-namespace:GalaxyBudsClient.Model.Config"
+             xmlns:constants="clr-namespace:GalaxyBudsClient.Model.Constants"
              xmlns:platform="clr-namespace:GalaxyBudsClient.Platform;assembly=GalaxyBudsClient.Platform"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="1200"
              x:Class="GalaxyBudsClient.Interface.Pages.SettingsPage"
@@ -21,6 +22,7 @@
 
     <ScrollViewer>
         <StackPanel Spacing="8" Margin="{StaticResource AppPageMargin}">
+            <Border Classes="AppHeaderCard">
             <DockPanel>
                 <Image Source="{OnPlatform '/Resources/icon.ico', Android='/Resources/Android/Orange/android/res/mipmap-xxxhdpi/ic_launcher.png'}"
                        DockPanel.Dock="Left"
@@ -49,11 +51,12 @@
                     </TextBlock>
                 </StackPanel>
             </DockPanel>
+            </Border>
 
             <controls:SettingsGroup Margin="0,4,0,0">
                 <controls:SettingsSymbolItem Content="{ext:Translate {x:Static i18N:Keys.DevicesSettingsLink}}"
                                              Description="{ext:Translate {x:Static i18N:Keys.DevicesSettingsLinkDesc}}"
-                                             Symbol="BluetoothConnected"
+                                             Symbol="Link"
                                              ActionSymbol="ChevronRight"
                                              IsClickEnabled="True"
                                              IsEnabled="{Binding CanManageDevices}"
@@ -72,7 +75,7 @@
                                                ItemsSource="{Binding ., Source={ext:ThemesBindingSource}}"
                                                SelectedValue="{Binding Theme, Source={x:Static config:Settings.Data}}">
                     <Interaction.Behaviors>
-                        <ext:RequiresDesktopBehavior />
+                        <ext:RequiresDesktopBehavior AllowIosDesign="True" />
                         <ext:LocalizationAwareComboBoxBehavior />
                     </Interaction.Behaviors>
                 </controls:SettingsComboBoxItem>
@@ -96,13 +99,11 @@
                                             Symbol="Color"
                                             Color="{Binding AccentColor, Source={x:Static config:Settings.Data}, Converter={StaticResource ColorUintConverter}}" />
 
-                <controls:SettingsComboBoxItem Name="AppLanguage"
-                                               Content="{ext:Translate {x:Static i18N:Keys.SettingsLocalizationDisable}}"
-                                               Description="{ext:Translate {x:Static i18N:Keys.SettingsLocalizationDescription}}"
-                                               Symbol="LocalLanguage"
-                                               ItemsSource="{Binding Source={ext:LocalesBindingSource}}"
-                                               SelectedValue="{Binding Locale, Source={x:Static config:Settings.Data}}" />
-                
+                <controls:SettingsSwitchItem Content="{ext:Translate {x:Static i18N:Keys.SettingsRealisticEarbudIcons}}"
+                                             Description="{ext:Translate {x:Static i18N:Keys.SettingsRealisticEarbudIconsDescription}}"
+                                             Symbol="ImageSparkle"
+                                             IsChecked="{Binding RealisticEarbudImages, Source={x:Static config:Settings.Data}}" />
+
                 <controls:SettingsComboBoxItem Name="ColorOverride"
                                                Content="{ext:Translate {x:Static i18N:Keys.SettingsColorOverride}}"
                                                Description="{ext:Translate {x:Static i18N:Keys.SettingsColorOverrideDescription}}"
@@ -111,16 +112,26 @@
                                                ItemsSource="{Binding ., Source={ext:DeviceColorBindingSource}}"
                                                SelectedValue="{Binding ColorOverride, Source={x:Static config:Settings.Data}}" />
 
-                <controls:SettingsSwitchItem Content="{ext:Translate {x:Static i18N:Keys.SettingsRealisticEarbudIcons}}"
-                                             Description="{ext:Translate {x:Static i18N:Keys.SettingsRealisticEarbudIconsDescription}}"
-                                             Symbol="ImageSparkle"
-                                             IsChecked="{Binding RealisticEarbudImages, Source={x:Static config:Settings.Data}}" />
+                <controls:SettingsComboBoxItem Name="AppLanguage"
+                                               Content="{ext:Translate {x:Static i18N:Keys.SettingsLocalizationDisable}}"
+                                               Description="{ext:Translate {x:Static i18N:Keys.SettingsLocalizationDescription}}"
+                                               Symbol="LocalLanguage"
+                                               ItemsSource="{Binding Source={ext:LocalesBindingSource}}"
+                                               SelectedValue="{Binding Locale, Source={x:Static config:Settings.Data}}" />
+
+                <controls:SettingsComboBoxItem Name="TemperatureUnit"
+                                               Content="{ext:Translate {x:Static i18N:Keys.IosTemperatureUnit}}"
+                                               Description="{ext:Translate {x:Static i18N:Keys.IosTemperatureUnitDesc}}"
+                                               Symbol="Temperature"
+                                               ItemsSource="{x:Static converters:TemperatureUnitNameConverter.Units}"
+                                               DisplayMemberBinding="{Binding ., Converter={x:Static converters:TemperatureUnitNameConverter.Instance}, x:DataType=constants:TemperatureUnits}"
+                                               SelectedValue="{Binding TemperatureUnit, Source={x:Static config:Settings.Data}}" />
 
                 <controls:SettingsSwitchItem Content="{ext:Translate {x:Static i18N:Keys.SettingsNavSidebar}}"
                                              Description="{ext:Translate {x:Static i18N:Keys.SettingsNavSidebarDescription}}"
                                              Symbol="LayoutColumnOneThirdLeft"
-                                             IsChecked="{Binding ShowSidebar, Source={x:Static config:Settings.Data}}" />
-
+                                             IsChecked="{Binding ShowSidebar, Source={x:Static config:Settings.Data}}"
+                                             IsVisible="{Binding !., Source={x:Static platform:PlatformUtils.UseIosDesign}}" />
             </ui:FASettingsExpander>
 
             <ui:FASettingsExpander Header="{ext:Translate {x:Static i18N:Keys.SettingsTraySettings}}"

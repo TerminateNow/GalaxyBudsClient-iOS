@@ -135,4 +135,12 @@ Things the first CI builds taught:
   `iOSPlatformOptions.RenderingMode ... no options were applied`) or can't write to its own data container (sandboxed). Verified on the device.
 - Sentry crash reporting is off on iOS (`Program.Startup`), because reports would go to the upstream project.
 
+iPhone design (`PlatformUtils.UseIosDesign`, on for iOS): `Interface/Styling/IosStyles.axaml` restyles the shared controls
+(grouped inset lists with colored icon tiles from `IosIconTileConverter`, iOS switch and slider, `FASettingsExpander` as a titled
+section). `MainView` swaps the sidebar and breadcrumbs for an iOS navigation bar with a large title. The home page uses
+`Pages/IosHomeView` with `Controls/IosBatteryCard`. Desktop and Android look unchanged.
+- Preview it on Linux by setting `GBC_IOS_DESIGN=1`, for example with an Avalonia.Headless harness that renders `MainView` at 375×667.
+- Don't set `FANavigationView.IsPaneVisible = false`: it loops forever in layout. Use `PaneDisplayMode = LeftMinimal` with the toggle hidden.
+- Type selectors don't match `SettingsSymbolItem` subclasses (their style key is `FASettingsExpanderItem`), so the controls add classes (`SliderItem`, `ComboItem`) for styling.
+
 Details are in `GalaxyBudsClient.iOS/README.md`.

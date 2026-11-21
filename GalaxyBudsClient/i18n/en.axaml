@@ -788,4 +788,6 @@ The name change may not be detected by devices (including this one) until you un
     <sys:String x:Key="ios_section_more">More</sys:String>
     <sys:String x:Key="ios_temperature_unit">Temperature unit</sys:String>
     <sys:String x:Key="ios_temperature_unit_desc">Used for the earbud temperatures in the battery details</sys:String>
+    <sys:String x:Key="ios_celsius">Celsius</sys:String>
+    <sys:String x:Key="ios_fahrenheit">Fahrenheit</sys:String>
 </ResourceDictionary>

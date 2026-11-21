@@ -163,14 +163,14 @@
                     <ControlTemplate>
                         <StackPanel Spacing="6">
                             <!-- Template parts the control looks up; not shown in this design -->
-                            <Expander Name="Expander" MaxHeight="0" Opacity="0" IsHitTestVisible="False" IsExpanded="True">
+                            <Expander Name="Expander" Height="0" MinHeight="0" Margin="0,-6,0,0" Opacity="0" IsHitTestVisible="False" IsExpanded="True">
                                 <Expander.Template>
                                     <ControlTemplate>
                                         <ToggleButton Name="ToggleButton" />
                                     </ControlTemplate>
                                 </Expander.Template>
                             </Expander>
-                            <ui:FASettingsExpanderItem Name="ContentHost" MaxHeight="0" Opacity="0" IsHitTestVisible="False" />
+                            <ui:FASettingsExpanderItem Name="ContentHost" Height="0" MinHeight="0" Margin="0,-6,0,0" Opacity="0" IsHitTestVisible="False" />
 
                             <TextBlock Name="SectionHeader"
                                        Margin="16,0,16,0"
@@ -227,6 +227,34 @@
             </ControlTheme>
         </ResourceDictionary>
     </Styles.Resources>
+
+    <!-- Groups whose rows are all hidden: also cancel the page's item spacing -->
+    <Style Selector="controls|SettingsGroup.Empty">
+        <Setter Property="Margin" Value="0,-8,0,0" />
+        <Setter Property="Height" Value="0" />
+    </Style>
+
+    <!-- Settings page: app name and version as a card -->
+    <Style Selector="Border.AppHeaderCard">
+        <Setter Property="Background" Value="{DynamicResource IosSurfaceBrush}" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Padding" Value="16,18" />
+        <Setter Property="Margin" Value="0,0,0,20" />
+    </Style>
+    <Style Selector="Border.AppHeaderCard Image">
+        <Setter Property="Height" Value="60" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.AppHeaderCard TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+    </Style>
+    <Style Selector="Border.AppHeaderCard StackPanel > TextBlock:nth-child(1)">
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource IosTextBrush}" />
+    </Style>
 
     <!-- Header above a group of rows -->
     <Style Selector="TextBlock.IosSectionHeader">

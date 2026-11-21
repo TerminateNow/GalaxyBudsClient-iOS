@@ -12,6 +12,8 @@ iOS gives apps no RFCOMM access, so all Bluetooth traffic goes through the BudsB
   The port is read from the bridge's settings file if it was changed there.
 - The shared project is built with `IsIOS=true`, passed globally to restore and publish (`-p:IsIOS=true`; the project reference alone doesn't carry it through restore, the same issue `GalaxyBudsClient.Android/build.sh` works around): a library with the `iOS` define. Scripting, developer tools and the other
   desktop-only parts are left out, as on Android.
+- The app uses an iPhone design: grouped lists, a navigation bar with large titles and a battery card on the home screen
+  (`PlatformUtils.UseIosDesign`, see `GalaxyBudsClient/Interface/Styling/IosStyles.axaml`). Set `GBC_IOS_DESIGN=1` to preview it on a desktop.
 - iOS suspends the app in the background, so the connection drops when you leave the app and reconnects when you come back.
 
 ## Build

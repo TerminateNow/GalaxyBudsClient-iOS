@@ -39,6 +39,8 @@ public class SettingsGroup : ItemsControl
         
         // Handle single items
         var visibleItems = Items.OfType<Control>().Where(x => x.IsVisible).ToList();
+        // A group whose rows are all hidden (unsupported features) takes no space in the iOS design
+        Classes.Set("Empty", visibleItems.Count == 0);
         if(visibleItems.Count == 1 && visibleItems.First() is {} single)
         {
             single.Classes.Set("SingleItem", true);

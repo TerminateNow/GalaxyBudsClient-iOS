@@ -16,8 +16,9 @@ The package has two parts:
 > **The tweak supports iOS 15.8.8 (19H422) only.** It checks the `bluetoothd` binary before hooking anything.
 > On any other build it logs `unsupported bluetoothd build` and does nothing.
 
-Status: **working end to end** with 0.2.1 on an iPhone 7 running 15.8.8 with Galaxy Buds3 Pro (firmware R630XXU0AZG2).
+Status: **working end to end** on an iPhone 7 running 15.8.8 with Galaxy Buds3 Pro (firmware R630XXU0AZG2).
 The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STATUS_UPDATED` right after the channel opens, and every frame's CRC is valid.
+The 0.3.1 background service (`PING`, `LIST`, `CONNECT` with the saved channel) is verified on the same phone.
 
 ## Install
 

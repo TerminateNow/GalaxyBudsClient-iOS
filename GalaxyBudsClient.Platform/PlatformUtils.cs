@@ -26,6 +26,13 @@ public static class PlatformUtils
     public static bool IsAndroid => RuntimeInformation.RuntimeIdentifier.Contains("android", StringComparison.OrdinalIgnoreCase);
     public static bool IsIOS => OperatingSystem.IsIOS();
     public static bool IsDesktop => IsWindows || IsLinux || IsOSX;
+
+    /// <summary>
+    /// The iPhone look (grouped lists, navigation bar, large titles). On for iOS; on other platforms it can be
+    /// forced with GBC_IOS_DESIGN=1 to preview the iOS layout on a desktop.
+    /// </summary>
+    public static bool UseIosDesign { get; } =
+        IsIOS || Environment.GetEnvironmentVariable("GBC_IOS_DESIGN") == "1";
     public static bool IsRunningInFlatpak => Environment.GetEnvironmentVariable("container") == "flatpak";
 
     public static bool SupportsTrayIcon => IsWindows || IsLinux || IsOSX;

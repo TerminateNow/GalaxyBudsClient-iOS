@@ -14,11 +14,13 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Threading;
 using FluentAvalonia.Styling;
 using GalaxyBudsClient.Interface;
 using GalaxyBudsClient.Interface.Dialogs;
+using GalaxyBudsClient.Interface.StyledWindow;
 using GalaxyBudsClient.Message;
 using GalaxyBudsClient.Message.Decoder;
 using GalaxyBudsClient.Message.Encoder;
@@ -75,7 +77,17 @@ public class App : Application
 #endif
 
         AvaloniaXamlLoader.Load(this);
-            
+
+        if (PlatformUtils.UseIosDesign)
+        {
+            // iPhone look: grouped lists and iOS controls on top of the desktop styles
+            Styles.Add(new StyleInclude(new Uri(Program.AvaresUrl))
+            {
+                Source = new Uri(Program.AvaresUrl + "/Interface/Styling/IosStyles.axaml")
+            });
+            Resources["AppPageMargin"] = new Thickness(16, 0, 16, 32);
+        }
+
         if (Loc.IsTranslatorModeEnabled)
         {
             Settings.Data.Locale = Locales.custom;
@@ -357,6 +369,11 @@ public class App : Application
     private void LoadThemeProperties()
     {
         FluentTheme.PreferSystemTheme = Settings.Data.Theme == Themes.System;
+        if (!PlatformUtils.IsDesktop || PlatformUtils.UseIosDesign)
+        {
+            // Mobile has no window to apply the theme to (IStyledWindow), so set it app-wide
+            RequestedThemeVariant = IStyledWindow.GetThemeVariant();
+        }
         var color = Settings.Data.AccentColor;
         if(Color.FromUInt32(color).A == 0)
         {
@@ -364,6 +381,7 @@ public class App : Application
         }
         FluentTheme.CustomAccentColor = Color.FromUInt32(color);
         Resources["AccentColor"] = FluentTheme.CustomAccentColor;
+        Resources["IosAccentBrush"] = new SolidColorBrush(Color.FromUInt32(color));
     }
         
     private void TrayIcon_OnClicked(object? sender, EventArgs e)

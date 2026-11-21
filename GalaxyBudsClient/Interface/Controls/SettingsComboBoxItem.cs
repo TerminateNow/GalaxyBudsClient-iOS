@@ -12,6 +12,8 @@ using Avalonia.Metadata;
 using FluentAvalonia.UI.Controls;
 using GalaxyBudsClient.Interface.Converters;
 
+using GalaxyBudsClient.Platform;
+
 namespace GalaxyBudsClient.Interface.Controls;
 
 
@@ -39,6 +41,9 @@ public class SettingsComboBoxItem : SettingsSymbolItem
         _toolButton.Click += OnToolButtonClick;
         
         IsClickEnabled = false;
+        Classes.Add("ComboItem");
+        if (PlatformUtils.UseIosDesign)
+            _comboBox.MinWidth = 0; // iOS design: the choice shows as plain text next to the title
         Footer = new StackPanel
         {
             Spacing = 4,

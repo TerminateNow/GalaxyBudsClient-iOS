@@ -6,6 +6,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using Avalonia.Controls.Platform;
+using Avalonia.Data;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Navigation;
 using FluentAvalonia.UI.Windowing;
@@ -79,6 +82,9 @@ public partial class MainView : UserControl
 
         InitializeNavigationPages();
         
+        if (PlatformUtils.UseIosDesign)
+            InitializeIosShell();
+
         FABreadcrumbBar.ItemClicked += OnBreadcrumbBarItemClicked;
         FrameView.Navigated += OnFrameViewNavigated;
         NavView.ItemInvoked += OnNavigationViewItemInvoked;
@@ -98,6 +104,12 @@ public partial class MainView : UserControl
         if (insetsManager != null && (PlatformUtils.IsAndroid || PlatformUtils.IsIOS))
         {
             insetsManager.DisplayEdgeToEdgePreference = true;
+        }
+        if (insetsManager != null && PlatformUtils.UseIosDesign)
+        {
+            insetsManager.SafeAreaChanged -= OnSafeAreaChanged;
+            insetsManager.SafeAreaChanged += OnSafeAreaChanged;
+            ApplySafeArea(insetsManager.SafeAreaPadding);
         }
     }
 
@@ -240,6 +252,9 @@ public partial class MainView : UserControl
     
     private void RefreshSidebarState()
     {
+        if (PlatformUtils.UseIosDesign)
+            return; // no sidebar: navigation happens through the home screen and the navigation bar
+
         NavView.Classes.Set("AppNav", Settings.Data.ShowSidebar);
         NavView.Classes.Set("MobileContentContainer", true);
         NavView.PaneDisplayMode = Settings.Data.ShowSidebar ? 
@@ -292,7 +307,13 @@ public partial class MainView : UserControl
     }
 
     private void OnNavigationViewBackRequested(object? sender, FANavigationViewBackRequestedEventArgs e)
+        => GoBack();
+
+    private void GoBack()
     {
+        if (!FrameView.CanGoBack)
+            return;
+
         /* Pressing back on a main page: remove all items until a MainPageViewModel is found
            We don't want to return to a sub page. The back button mostly behaves like an up button. */
 
@@ -376,7 +397,11 @@ public partial class MainView : UserControl
         CurrentPageViewModel = page;
         page?.OnNavigatedTo();
         
-        if (FrameView.BackStackDepth > 0 && !NavView.IsBackButtonVisible)
+        if (PlatformUtils.UseIosDesign)
+        {
+            UpdateIosNavBar(page);
+        }
+        else if (FrameView.BackStackDepth > 0 && !NavView.IsBackButtonVisible)
         {
             NavView.IsBackButtonVisible = true;
         }
@@ -385,6 +410,101 @@ public partial class MainView : UserControl
             NavView.IsBackButtonVisible = false;
         }
     }
+
+    #region iOS design
+    private ScrollViewer? _iosScrollViewer;
+
+    private void InitializeIosShell()
+    {
+        // Minimal pane with its toggle hidden: no sidebar. (IsPaneVisible = false makes FANavigationView
+        // loop forever in layout, so don't use it.)
+        NavView.PaneDisplayMode = FANavigationViewPaneDisplayMode.LeftMinimal;
+        NavView.IsPaneToggleButtonVisible = false;
+        NavView.IsBackButtonVisible = false;
+        FABreadcrumbBar.IsVisible = false;
+        IosNavBar.IsVisible = true;
+        IosLargeTitle.IsVisible = true;
+        this[!BackgroundProperty] = this.GetResourceObservable("IosBackgroundBrush").ToBinding();
+        BluetoothImpl.Instance.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(BluetoothImpl.DeviceName))
+                Dispatcher.UIThread.Post(() => UpdateIosNavBar(CurrentPageViewModel));
+        };
+    }
+
+    private void OnSafeAreaChanged(object? sender, SafeAreaChangedArgs e) => ApplySafeArea(e.SafeAreaPadding);
+
+    private void ApplySafeArea(Thickness padding)
+    {
+        // Keep the navigation bar below the status bar and the content above the home indicator
+        IosNavBar.Margin = new Thickness(padding.Left + 8, padding.Top, padding.Right + 8, 0);
+        ContentContainer.Margin = new Thickness(0, 0, 0, padding.Bottom);
+    }
+
+    private static string ResolveTitle(PageViewModelBase? page)
+    {
+        if (page == null)
+            return string.Empty;
+        if (page is HomePageViewModel)
+            return BluetoothImpl.Instance.DeviceName;
+        return Loc.ResolveOrDefault(page.TitleKey) ?? page.FallbackTitle;
+    }
+
+    private void UpdateIosNavBar(PageViewModelBase? page)
+    {
+        var title = ResolveTitle(page);
+        IosLargeTitle.Text = title;
+        IosInlineTitle.Text = title;
+
+        PageViewModelBase? previous = null;
+        if (FrameView.BackStackDepth > 0)
+            previous = ResolveViewModelByType(FrameView.BackStack[^1].SourcePageType);
+
+        IosBackButton.IsVisible = FrameView.CanGoBack && page is not (HomePageViewModel or WelcomePageViewModel);
+        IosBackLabel.Text = previous is HomePageViewModel
+            ? Loc.ResolveOrDefault(previous.TitleKey) ?? previous.FallbackTitle
+            : ResolveTitle(previous);
+        IosSettingsButton.IsVisible = page is HomePageViewModel or WelcomePageViewModel;
+
+        SetIosTitleCollapsed(false);
+        if (_iosScrollViewer != null)
+            _iosScrollViewer.ScrollChanged -= OnIosScrollChanged;
+        _iosScrollViewer = null;
+
+        // The large title collapses into the navigation bar once the page is scrolled
+        Dispatcher.UIThread.Post(() =>
+        {
+            _iosScrollViewer = (FrameView.Content as Control)?.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+            if (_iosScrollViewer != null)
+                _iosScrollViewer.ScrollChanged += OnIosScrollChanged;
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void OnIosScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        // Only react to the user scrolling, not to the viewport resizing when the title collapses,
+        // and use separate thresholds so the two can't trigger each other back and forth
+        if (sender is not ScrollViewer sv || e.OffsetDelta.Y == 0)
+            return;
+        if (sv.Offset.Y > 40)
+            SetIosTitleCollapsed(true);
+        else if (sv.Offset.Y < 4)
+            SetIosTitleCollapsed(false);
+    }
+
+    private void SetIosTitleCollapsed(bool collapsed)
+    {
+        if (IosLargeTitle.IsVisible == !collapsed)
+            return;
+        IosLargeTitle.IsVisible = !collapsed;
+        IosInlineTitle.Opacity = collapsed ? 1 : 0;
+    }
+
+    private void OnIosBackClicked(object? sender, RoutedEventArgs e) => GoBack();
+
+    private void OnIosSettingsClicked(object? sender, RoutedEventArgs e)
+        => NavigationService.Instance.Navigate(typeof(SettingsPageViewModel));
+    #endregion
 
     private static void SetNvIcon(FANavigationViewItem? item, bool selected)
     {

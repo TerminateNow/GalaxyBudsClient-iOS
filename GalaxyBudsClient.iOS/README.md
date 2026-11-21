@@ -45,6 +45,10 @@ The app runs sandboxed with its own data container, so its settings and log (`ap
 find /var/mobile/Containers/Data/Application -name application.log -path "*GalaxyBudsClient*"
 ```
 
+On iOS the log also gets Avalonia's own warnings and errors (for example `Exception in render loop`, which otherwise
+only goes to Trace and leaves a black screen), `UI:` startup milestones, and `UiDiagnostics` warnings when the UI thread
+is blocked or kept too busy to lay out and render (`Utils/Interface/UiDiagnostics.cs`).
+
 The sandbox still allows the TCP connection to the bridge on `127.0.0.1`. It can't read the bridge's settings file,
 so a port changed with `budsrfcomm config -p` isn't picked up by the app (it uses 8762).
 Crash reporting (Sentry) is off on iOS, since reports would go to the upstream project.

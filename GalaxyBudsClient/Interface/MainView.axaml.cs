@@ -89,6 +89,7 @@ public partial class MainView : UserControl
         FrameView.Navigated += OnFrameViewNavigated;
         NavView.ItemInvoked += OnNavigationViewItemInvoked;
         NavView.BackRequested += OnNavigationViewBackRequested;
+        UiDiagnostics.Milestone("MainView created (iOS design: {IosDesign})", PlatformUtils.UseIosDesign);
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -111,6 +112,18 @@ public partial class MainView : UserControl
             insetsManager.SafeAreaChanged += OnSafeAreaChanged;
             ApplySafeArea(insetsManager.SafeAreaPadding);
         }
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        UiDiagnostics.Milestone("MainView attached (size {Size}, safe area {SafeArea})",
+            topLevel?.ClientSize, insetsManager?.SafeAreaPadding);
+        topLevel?.RequestAnimationFrame(_ => UiDiagnostics.Milestone("First frame tick after attach"));
+        LayoutUpdated += OnFirstLayoutUpdated;
+    }
+
+    private void OnFirstLayoutUpdated(object? sender, EventArgs e)
+    {
+        LayoutUpdated -= OnFirstLayoutUpdated;
+        UiDiagnostics.Milestone("First layout pass done (bounds {Bounds})", Bounds);
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -349,7 +362,8 @@ public partial class MainView : UserControl
 
         var control = e.Content as Control;
         var page = control?.DataContext as PageViewModelBase;
-        
+        UiDiagnostics.Milestone("Navigated to {Page}", page?.GetType().Name ?? control?.GetType().Name);
+
         if (page is MainPageViewModelBase)
         {
             if (page is HomePageViewModel or WelcomePageViewModel)

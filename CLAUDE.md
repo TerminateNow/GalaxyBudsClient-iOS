@@ -134,6 +134,15 @@ Things the first CI builds taught:
   `/var/jb/Applications`, it either gets no GPU (with `no-container`/`no-sandbox`/`platform-application`; Avalonia aborts with
   `iOSPlatformOptions.RenderingMode ... no options were applied`) or can't write to its own data container (sandboxed). Verified on the device.
 - Sentry crash reporting is off on iOS (`Program.Startup`), because reports would go to the upstream project.
+- `application.log` is the only feedback from the device. Avalonia catches exceptions in its render loop and, with `LogToTrace`,
+  logs them only to Trace, so a frame that throws every time shows as a black screen with nothing in the log.
+  `Utils/Interface/UiDiagnostics` (on for iOS, or `GBC_UI_DIAGNOSTICS=1`) forwards Avalonia's warnings and errors to Serilog,
+  logs `UI:` milestones (MainView created and attached, first layout, first frame tick, each navigation) and has a watchdog
+  that warns when the UI thread is blocked or never gets to render-priority work.
+- The iPhone design renders fine on Linux even when the device shows black: a headless single-view harness
+  (Avalonia.Headless with `UseHeadlessDrawing = false`, the shared project built with `-p:IsIOS=true`, the lifetime from
+  `DispatchProxy.Create<ISingleViewApplicationLifetime, ...>` because Avalonia 12 forbids implementing it) runs the real `App`.
+  It can't reproduce Metal or UIKit behavior, so check the device log first.
 
 iPhone design (`PlatformUtils.UseIosDesign`, on for iOS): `Interface/Styling/IosStyles.axaml` restyles the shared controls
 (grouped inset lists with colored icon tiles from `IosIconTileConverter`, iOS switch and slider, `FASettingsExpander` as a titled

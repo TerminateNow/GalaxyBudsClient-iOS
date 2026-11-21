@@ -66,7 +66,8 @@ public class App : Application
     public override void Initialize()
     {
         DataContext = this;
-            
+        UiDiagnostics.Init();
+
 #if OSX
 #if MACOS_SDK
         NSApplication.Init();

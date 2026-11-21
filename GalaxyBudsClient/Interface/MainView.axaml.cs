@@ -33,6 +33,8 @@ public partial class MainView : UserControl
     private MainViewViewModel? ViewModel => DataContext as MainViewViewModel;
     private PageViewModelBase? CurrentPageViewModel { set; get; }
     private bool _staticEventsSubscribed;
+    private bool _attached;
+    private bool _navigationPagesReady;
 
     private readonly MainPageViewModelBase[] _mainPages = [
         new WelcomePageViewModel(),
@@ -98,6 +100,7 @@ public partial class MainView : UserControl
 
         Instance = this;
         NavigationService.Instance.Frame = FrameView;
+        _attached = true;
         SubscribeStaticEvents();
         OnLanguageUpdated();
 
@@ -118,6 +121,8 @@ public partial class MainView : UserControl
             topLevel?.ClientSize, insetsManager?.SafeAreaPadding);
         topLevel?.RequestAnimationFrame(_ => UiDiagnostics.Milestone("First frame tick after attach"));
         LayoutUpdated += OnFirstLayoutUpdated;
+
+        NavigateToStartPageIfNeeded();
     }
 
     private void OnFirstLayoutUpdated(object? sender, EventArgs e)
@@ -128,6 +133,7 @@ public partial class MainView : UserControl
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        _attached = false;
         UnsubscribeStaticEvents();
         NavigationService.Instance.ClearFrame(FrameView);
 
@@ -311,12 +317,27 @@ public partial class MainView : UserControl
 
             NavView.MenuItemsSource = menuItems;
             NavView.FooterMenuItemsSource = footerItems;
+            _navigationPagesReady = true;
             CheckSetupWizardState();
-            
-            // Go to Home if not in setup mode
-            if(ViewModel?.IsInSetupWizard == false)
-                NavigationService.Instance.Navigate(typeof(HomePageViewModel));
+            NavigateToStartPageIfNeeded();
         }, DispatcherPriority.Render);
+    }
+
+    /// <summary>
+    /// Shows the first page (Welcome in setup mode, Home otherwise). That needs both the navigation items, created by the
+    /// job posted from the constructor, and NavigationService.Frame, set when the view is attached; NavigationService drops
+    /// navigation while it has no frame. Either can happen first: on iOS the posted job can run before the view is attached,
+    /// which left the app on an empty (black) main view. So both call this, and the second one navigates.
+    /// </summary>
+    private void NavigateToStartPageIfNeeded()
+    {
+        if (!_navigationPagesReady || !_attached || FrameView.Content != null)
+            return;
+
+        UiDiagnostics.Milestone("Showing the start page (setup wizard: {Wizard})", ViewModel?.IsInSetupWizard);
+        NavigationService.Instance.Navigate(ViewModel?.IsInSetupWizard == true
+            ? typeof(WelcomePageViewModel)
+            : typeof(HomePageViewModel));
     }
 
     private void OnNavigationViewBackRequested(object? sender, FANavigationViewBackRequestedEventArgs e)

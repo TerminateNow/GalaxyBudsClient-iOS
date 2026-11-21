@@ -143,6 +143,10 @@ Things the first CI builds taught:
   (Avalonia.Headless with `UseHeadlessDrawing = false`, the shared project built with `-p:IsIOS=true`, the lifetime from
   `DispatchProxy.Create<ISingleViewApplicationLifetime, ...>` because Avalonia 12 forbids implementing it) runs the real `App`.
   It can't reproduce Metal or UIKit behavior, so check the device log first.
+- On iOS, `MainView` is attached about 100 ms after it's created, so jobs posted from its constructor can run first.
+  `NavigationService` drops navigation while it has no frame (set on attach), which once left the app on an empty, black
+  main view (no `UI: Navigated to` in the log). The start page is shown by `NavigateToStartPageIfNeeded`, from both the posted
+  job and `OnAttachedToVisualTree`. To test the iOS order in the harness, run the dispatcher's jobs before attaching the view.
 
 iPhone design (`PlatformUtils.UseIosDesign`, on for iOS): `Interface/Styling/IosStyles.axaml` restyles the shared controls
 (grouped inset lists with colored icon tiles from `IosIconTileConverter`, iOS switch and slider, `FASettingsExpander` as a titled

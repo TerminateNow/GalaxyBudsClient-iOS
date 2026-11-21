@@ -21,19 +21,28 @@ Building needs macOS and Xcode, so it runs on GitHub Actions (`.github/workflows
 
 1. builds the app unsigned (`EnableCodeSigning=false`) with the .NET iOS workload,
 2. fakesigns it with `ldid` (`packaging/package.sh`, entitlements in `packaging/entitlements.plist`),
-3. packs it as `com.galaxybudsclient.app_<version>_iphoneos-arm64.deb` and uploads it as the `GalaxyBudsClient_iOS_jailbreak` artifact.
+3. packs it as `GalaxyBudsManager_<version>_jailbreak.ipa` and uploads it as the `GalaxyBudsClient_iOS_jailbreak` artifact.
 
-`packaging/package.sh <App.app> <version> <outdir>` also works on Linux, given `ldid` and `dpkg-deb`.
+`packaging/package.sh <App.app> <version> <outdir>` also works on Linux, given `ldid` and `zip`.
 
 ## Install
 
 1. Install the BudsBridge package first (0.3.1 or newer).
-2. Download the artifact from the workflow run, unzip it, copy the `.deb` to the phone and install it with Sileo or Filza.
-   It goes to `/var/jb/Applications/GalaxyBudsManager.app` and appears on the home screen as "Galaxy Buds".
+2. Install **TrollStore Lite** from Sileo (Havoc repo), or AppSync Unified.
+3. Open the `.ipa` with TrollStore Lite (for example from Filza). The app appears on the home screen as "Galaxy Buds".
 
-The app runs as an ordinary sandboxed app with its own data container, so its settings and log (`application.log`) are in
-`/var/mobile/Containers/Data/Application/<UUID>/` (find them with
-`find /var/mobile/Containers/Data/Application -name application.log -path "*GalaxyBudsClient*"`).
+It must be installed as a user app. A `.deb` that puts it in `/var/jb/Applications` (registered with `uicache`) doesn't work.
+Tested on iOS 15.8.8 with Dopamine: depending on the entitlements, the app then either gets no GPU access
+(`IOServiceOpen` on the GPU returns `kIOReturnNotPermitted`, and Avalonia can't start Metal or OpenGL) or can't write to its
+own data container. Keep `packaging/entitlements.plist` minimal, like an App Store app.
 
-Keep `packaging/entitlements.plist` minimal. With `platform-application` iOS denies the app the GPU, so Avalonia can't start
-Metal or OpenGL and the app aborts at launch.
+The app runs sandboxed with its own data container, so its settings and log (`application.log`) are in
+`/var/mobile/Containers/Data/Application/<UUID>/Documents/GalaxyBudsClient/`. Find them with:
+
+```bash
+find /var/mobile/Containers/Data/Application -name application.log -path "*GalaxyBudsClient*"
+```
+
+The sandbox still allows the TCP connection to the bridge on `127.0.0.1`. It can't read the bridge's settings file,
+so a port changed with `budsrfcomm config -p` isn't picked up by the app (it uses 8762).
+Crash reporting (Sentry) is off on iOS, since reports would go to the upstream project.

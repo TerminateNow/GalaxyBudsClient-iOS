@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<!--
-	  Keep this minimal, like an ordinary App Store app. Tested on an iPhone 7 with iOS 15.8.8 and Dopamine:
-	  with platform-application (with or without no-container / no-sandbox) iOS denies the app the GPU
-	  (IOServiceOpen on IOAccelerator returns kIOReturnNotPermitted), so neither Metal nor OpenGL starts
-	  and Avalonia aborts at launch. With these entitlements uicache gives the app a normal data container,
-	  and the sandbox still allows the TCP connection to the BudsBridge service on 127.0.0.1.
+	  Keep this minimal, like an ordinary App Store app, and install the .ipa as a user app (TrollStore Lite).
+	  Tested on an iPhone 7 with iOS 15.8.8 and Dopamine: as a uicache-registered app in /var/jb/Applications,
+	  the app either has no GPU (with no-container or platform-application: IOServiceOpen on IOAccelerator returns
+	  kIOReturnNotPermitted, so Avalonia can't start Metal or OpenGL) or can't write to its own data container
+	  (sandboxed). Installed through TrollStore Lite with these entitlements, it starts normally.
 	-->
 	<key>application-identifier</key>
 	<string>com.galaxybudsclient.ios</string>

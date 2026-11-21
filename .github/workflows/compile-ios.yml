@@ -1,7 +1,7 @@
 name: Compile iOS app (jailbreak)
 
-# Builds GalaxyBudsClient.iOS unsigned, fakesigns it with ldid and packs it as a rootless .deb
-# for jailbroken devices (Dopamine). Bluetooth goes through the BudsBridge package (ios/BudsBridge).
+# Builds GalaxyBudsClient.iOS unsigned, fakesigns it with ldid and packs it as an .ipa for TrollStore Lite
+# on jailbroken devices (Dopamine). Bluetooth goes through the BudsBridge package (ios/BudsBridge).
 
 on:
   push:
@@ -51,7 +51,7 @@ jobs:
 
     - name: Package
       run: |
-        brew install ldid dpkg
+        brew install ldid
         APP=$(find GalaxyBudsClient.iOS/bin/Release -name "*.app" -type d -prune | head -1)
         echo "App bundle: $APP"
         du -sh "$APP"
@@ -62,4 +62,4 @@ jobs:
       uses: actions/upload-artifact@v6
       with:
         name: GalaxyBudsClient_iOS_jailbreak
-        path: dist/*.deb
+        path: dist/*.ipa

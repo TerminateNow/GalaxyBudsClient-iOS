@@ -1,7 +1,11 @@
 #!/bin/bash
-# Fakesigns a built GalaxyBudsClient.iOS.app with ldid and packs it into a rootless .deb.
+# Fakesigns a built GalaxyBudsClient.iOS.app with ldid and packs it as an .ipa for TrollStore Lite
+# (or AppSync Unified) on a jailbroken device.
 # Usage: package.sh <path/to/GalaxyBudsClient.iOS.app> <version> <output dir>
-# Needs ldid (ProcursusTeam) and dpkg-deb. Works on macOS and Linux.
+# Needs ldid (ProcursusTeam) and zip. Works on macOS and Linux.
+#
+# It must be installed as a user app (TrollStore Lite / installd), not dropped into /var/jb/Applications:
+# registered with uicache, the app gets neither a writable data container nor GPU access, and Avalonia can't start.
 set -euo pipefail
 
 APP="${1:?app bundle}"
@@ -11,10 +15,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 LDID="${LDID:-ldid}"
 
 STAGE="$(mktemp -d)"
-chmod 0755 "$STAGE"
 trap 'rm -rf "$STAGE"' EXIT
-DEST="$STAGE/var/jb/Applications/GalaxyBudsManager.app"
-mkdir -p "$(dirname "$DEST")"
+DEST="$STAGE/Payload/GalaxyBudsManager.app"
+mkdir -p "$STAGE/Payload"
 cp -R "$APP" "$DEST"
 rm -rf "$DEST/_CodeSignature" "$DEST/embedded.mobileprovision"
 
@@ -38,12 +41,9 @@ echo "signing $EXE (with entitlements)"
 "$LDID" -S"$HERE/entitlements.plist" "$DEST/$EXE"
 chmod 0755 "$DEST/$EXE"
 
-mkdir -p "$STAGE/DEBIAN"
-sed "s/@VERSION@/$VERSION/" "$HERE/DEBIAN/control" > "$STAGE/DEBIAN/control"
-cp "$HERE/DEBIAN/postinst" "$HERE/DEBIAN/prerm" "$STAGE/DEBIAN/"
-chmod 0755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/prerm"
-
 mkdir -p "$OUT"
-DEB="$OUT/com.galaxybudsclient.app_${VERSION}_iphoneos-arm64.deb"
-dpkg-deb -Zgzip --root-owner-group -b "$STAGE" "$DEB"
-echo "built $DEB"
+OUT="$(cd "$OUT" && pwd)"
+IPA="$OUT/GalaxyBudsManager_${VERSION}_jailbreak.ipa"
+rm -f "$IPA"
+(cd "$STAGE" && zip -qry "$IPA" Payload)
+echo "built $IPA"

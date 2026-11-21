@@ -124,13 +124,15 @@ Each cloud session starts without the SDK or `ldid`. Download them into the scra
 An Avalonia.iOS head, like the Android one. It references the shared project with `IsIOS=true` (a library with the `iOS` define;
 code that's `#if !Android` for scripting and developer tools is also `!iOS`). Its `Impl/BridgeBluetoothService.cs` speaks the
 bridge protocol on `127.0.0.1:8762`. It builds only on macOS with Xcode, so `.github/workflows/compile-ios.yml` builds it unsigned
-on a macOS runner and `packaging/package.sh` fakesigns it with `ldid` into a rootless `.deb` (`/var/jb/Applications/GalaxyBudsManager.app`).
+on a macOS runner and `packaging/package.sh` fakesigns it with `ldid` into an `.ipa` that's installed with TrollStore Lite.
 You can check that the shared project still compiles for iOS on Linux with `dotnet build -p:IsIOS=true GalaxyBudsClient/GalaxyBudsClient.csproj`.
 Things the first CI builds taught:
 - Pass `-p:IsIOS=true` globally to restore and publish. The ProjectReference's `AdditionalProperties` doesn't reach restore (the same as `IsAndroid`).
 - The .NET 11 iOS SDK (27.2) needs Xcode 27.2, which only GitHub's `xcode-27` runner image has (`macos-26` stops at Xcode 26.6).
 - The iOS 27 SDK requires a `UIApplicationSceneManifest` in `Info.plist`. Avalonia's `AppDelegate` supplies the scene configuration.
-- Keep the app's entitlements minimal (`packaging/entitlements.plist`). With `platform-application` iOS denies the GPU, and Avalonia aborts at launch
-  (`iOSPlatformOptions.RenderingMode ... no options were applied`). `no-sandbox` doesn't help.
+- Install the app as a user app (TrollStore Lite), with minimal entitlements (`packaging/entitlements.plist`). Registered with `uicache` in
+  `/var/jb/Applications`, it either gets no GPU (with `no-container`/`no-sandbox`/`platform-application`; Avalonia aborts with
+  `iOSPlatformOptions.RenderingMode ... no options were applied`) or can't write to its own data container (sandboxed). Verified on the device.
+- Sentry crash reporting is off on iOS (`Program.Startup`), because reports would go to the upstream project.
 
 Details are in `GalaxyBudsClient.iOS/README.md`.

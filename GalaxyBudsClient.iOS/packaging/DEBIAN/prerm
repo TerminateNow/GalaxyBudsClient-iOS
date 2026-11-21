@@ -1,9 +1,0 @@
-#!/var/jb/bin/sh
-export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin
-case "$1" in
-    remove|purge)
-        # Remove the home screen icon while the app is still there
-        uicache -u /var/jb/Applications/GalaxyBudsManager.app || true
-        ;;
-esac
-exit 0

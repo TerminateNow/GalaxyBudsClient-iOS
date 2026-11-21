@@ -126,4 +126,9 @@ code that's `#if !Android` for scripting and developer tools is also `!iOS`). It
 bridge protocol on `127.0.0.1:8762`. It builds only on macOS with Xcode, so `.github/workflows/compile-ios.yml` builds it unsigned
 on a macOS runner and `packaging/package.sh` fakesigns it with `ldid` into a rootless `.deb` (`/var/jb/Applications/GalaxyBudsManager.app`).
 You can check that the shared project still compiles for iOS on Linux with `dotnet build -p:IsIOS=true GalaxyBudsClient/GalaxyBudsClient.csproj`.
+Things the first CI builds taught:
+- Pass `-p:IsIOS=true` globally to restore and publish. The ProjectReference's `AdditionalProperties` doesn't reach restore (the same as `IsAndroid`).
+- The .NET 11 iOS SDK (27.2) needs Xcode 27.2, which only GitHub's `xcode-27` runner image has (`macos-26` stops at Xcode 26.6).
+- The iOS 27 SDK requires a `UIApplicationSceneManifest` in `Info.plist`. Avalonia's `AppDelegate` supplies the scene configuration.
+
 Details are in `GalaxyBudsClient.iOS/README.md`.

@@ -39,7 +39,7 @@ public partial class MainWindow : StyledAppWindow
     public MainWindow()
     {
         InitializeComponent();
-#if !Android
+#if !Android && !iOS
         Application.Current!.AttachDeveloperTools();
 #endif
             

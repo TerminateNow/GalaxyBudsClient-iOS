@@ -95,7 +95,7 @@ public partial class MainView : UserControl
         OnLanguageUpdated();
 
         var insetsManager = TopLevel.GetTopLevel(this)?.InsetsManager;
-        if (insetsManager != null && PlatformUtils.IsAndroid)
+        if (insetsManager != null && (PlatformUtils.IsAndroid || PlatformUtils.IsIOS))
         {
             insetsManager.DisplayEdgeToEdgePreference = true;
         }

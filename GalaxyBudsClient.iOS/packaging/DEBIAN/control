@@ -1,0 +1,10 @@
+Package: com.galaxybudsclient.app
+Name: Galaxy Buds Manager
+Version: @VERSION@
+Architecture: iphoneos-arm64
+Description: Unofficial Galaxy Buds manager (GalaxyBudsClient) for jailbroken iOS.
+ Talks to the earbuds through the BudsBridge service (com.galaxybudsclient.budsrfcomm).
+Maintainer: GalaxyBudsClient-iOS
+Author: GalaxyBudsClient contributors
+Section: Utilities
+Depends: firmware (>= 15.0), com.galaxybudsclient.budsrfcomm (>= 0.3.1), uikittools

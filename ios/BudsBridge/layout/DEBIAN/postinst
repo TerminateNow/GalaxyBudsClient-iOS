@@ -1,0 +1,21 @@
+#!/var/jb/bin/sh
+export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+# Never fail the install over these steps: the files are in place either way.
+
+PLIST=/var/jb/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist
+LOGDIR=/var/jb/var/mobile/Library/Logs
+PREFDIR=/var/jb/var/mobile/Library/Preferences
+CONFIG=$PREFDIR/com.galaxybudsclient.budsrfcomm.plist
+
+# The service runs as mobile: it needs to write its log and its settings file.
+mkdir -p "$LOGDIR" "$PREFDIR" && chown 501:501 "$LOGDIR" "$PREFDIR"
+[ -e "$CONFIG" ] && chown 501:501 "$CONFIG"
+
+if [ "$1" = configure ]; then
+    # Load the (new) tweak into bluetoothd. Bluetooth drops for a few seconds and reconnects.
+    killall bluetoothd 2>/dev/null
+    # Start the bridge now. At every later boot (after the jailbreak is applied), launchd starts it.
+    launchctl unload "$PLIST" 2>/dev/null
+    launchctl load -w "$PLIST" || echo "budsrfcomm: could not start the service, run: sudo launchctl load -w $PLIST"
+fi
+exit 0

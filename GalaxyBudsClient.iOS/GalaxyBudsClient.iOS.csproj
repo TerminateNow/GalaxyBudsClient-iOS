@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../GalaxyBudsClient/Application.props" />
+
+  <!--
+    iOS head for JAILBROKEN devices only (rootless / Dopamine).
+    iOS gives apps no RFCOMM access, so Bluetooth goes through the BudsBridge service
+    (ios/BudsBridge, package com.galaxybudsclient.budsrfcomm) on 127.0.0.1:8762.
+    The app is built unsigned, fakesigned with ldid and shipped as a .deb (see packaging/ and
+    .github/workflows/compile-ios.yml). It needs a macOS host with Xcode to build.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0-ios</TargetFramework>
+    <RuntimeIdentifier>ios-arm64</RuntimeIdentifier>
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <ApplicationId>com.galaxybudsclient.ios</ApplicationId>
+    <ApplicationTitle>Galaxy Buds Manager</ApplicationTitle>
+    <AppIcon>AppIcon</AppIcon>
+
+    <!-- Built unsigned; packaging/package.sh fakesigns it with ldid for the jailbreak -->
+    <EnableCodeSigning>false</EnableCodeSigning>
+
+    <DefineConstants>$(DefineConstants);iOS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.iOS" Version="$(AvaloniaVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- AvaloniaUI.DiagnosticsSupport is pulled in transitively; keep it disabled on iOS. -->
+    <RuntimeHostConfigurationOption Remove="Avalonia.Diagnostics.Diagnostic.IsEnabled" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the shared app icon set (it already contains the iPhone and iPad sizes) -->
+    <ImageAsset Include="../GalaxyBudsClient/Assets.xcassets/**/*.*">
+      <Link>Assets.xcassets/%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </ImageAsset>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="packaging/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../GalaxyBudsClient/GalaxyBudsClient.csproj">
+      <AdditionalProperties>IsIOS=true</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+</Project>

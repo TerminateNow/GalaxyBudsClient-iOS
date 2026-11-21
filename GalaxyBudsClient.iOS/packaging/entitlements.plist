@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Keep this minimal, like an ordinary App Store app, and install the .ipa as a user app (TrollStore Lite).
+	  Tested on an iPhone 7 with iOS 15.8.8 and Dopamine: as a uicache-registered app in /var/jb/Applications,
+	  the app either has no GPU (with no-container or platform-application: IOServiceOpen on IOAccelerator returns
+	  kIOReturnNotPermitted, so Avalonia can't start Metal or OpenGL) or can't write to its own data container
+	  (sandboxed). Installed through TrollStore Lite with these entitlements, it starts normally.
+	-->
+	<key>application-identifier</key>
+	<string>com.galaxybudsclient.ios</string>
+	<key>get-task-allow</key>
+	<true/>
+</dict>
+</plist>

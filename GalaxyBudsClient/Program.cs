@@ -79,7 +79,9 @@ public static class Program
             config = config.MinimumLevel.Warning();
         }
         
-        if (!Settings.Data.DisableCrashReporting)
+        // iOS (jailbreak fork): never report crashes. This is an unofficial port, and the reports would go to
+        // the upstream project's Sentry, which doesn't support it.
+        if (!Settings.Data.DisableCrashReporting && !PlatformUtils.IsIOS)
         {
             CrashReports.SetupCrashHandler();
             config = config.WriteTo.Sentry(o =>

@@ -4,11 +4,11 @@
       Otherwise, fall back to net11.0 for Linux and other platforms.
     -->
     <Import Project="Host.props" />
-    <PropertyGroup Condition="'$(_HostIsWindows)'=='true' And '$(IsAndroid)'!='true'">
+    <PropertyGroup Condition="'$(_HostIsWindows)'=='true' And '$(IsAndroid)'!='true' And '$(IsIOS)'!='true'">
         <TargetFramework>net11.0-windows10.0.26100</TargetFramework>
         <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     </PropertyGroup>
-    <PropertyGroup Condition="'$(_HostIsOSX)'=='true' And '$(IsAndroid)'!='true'">
+    <PropertyGroup Condition="'$(_HostIsOSX)'=='true' And '$(IsAndroid)'!='true' And '$(IsIOS)'!='true'">
         <TargetFramework Condition="'$(UseMacOSSDK)'=='true'">net11.0-macos</TargetFramework>
         <TargetFramework Condition="'$(TargetFramework)'==''">net11.0</TargetFramework>
     </PropertyGroup>
@@ -38,6 +38,10 @@
     <PropertyGroup Condition="'$(IsAndroid)'=='true'">
         <OutputType>Library</OutputType>
         <DefineConstants>$(DefineConstants);Android</DefineConstants>
+    </PropertyGroup>
+    <!-- iOS (jailbroken devices only): GalaxyBudsClient.iOS builds this project as a library with IsIOS=true -->
+    <PropertyGroup Condition="'$(IsIOS)'=='true'">
+        <OutputType>Library</OutputType>
     </PropertyGroup>
     
     <Import Project="Application.props" />
@@ -71,8 +75,8 @@
         <InternalsVisibleTo Include="GalaxyBudsClient.Tests" />
     </ItemGroup>
 
-    <!-- Android: we set the package name in GalaxyBudsClient.Android -->
-    <PropertyGroup Condition="'$(IsAndroid)'!='true'">
+    <!-- Android and iOS: the package name is set in the platform head project -->
+    <PropertyGroup Condition="'$(IsAndroid)'!='true' And '$(IsIOS)'!='true'">
         <ApplicationId>me.timschneeberger.galaxybudsclient</ApplicationId>
     </PropertyGroup>
     

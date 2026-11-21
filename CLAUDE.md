@@ -130,5 +130,7 @@ Things the first CI builds taught:
 - Pass `-p:IsIOS=true` globally to restore and publish. The ProjectReference's `AdditionalProperties` doesn't reach restore (the same as `IsAndroid`).
 - The .NET 11 iOS SDK (27.2) needs Xcode 27.2, which only GitHub's `xcode-27` runner image has (`macos-26` stops at Xcode 26.6).
 - The iOS 27 SDK requires a `UIApplicationSceneManifest` in `Info.plist`. Avalonia's `AppDelegate` supplies the scene configuration.
+- Keep the app's entitlements minimal (`packaging/entitlements.plist`). With `platform-application` iOS denies the GPU, and Avalonia aborts at launch
+  (`iOSPlatformOptions.RenderingMode ... no options were applied`). `no-sandbox` doesn't help.
 
 Details are in `GalaxyBudsClient.iOS/README.md`.

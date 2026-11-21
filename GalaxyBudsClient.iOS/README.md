@@ -31,5 +31,9 @@ Building needs macOS and Xcode, so it runs on GitHub Actions (`.github/workflows
 2. Download the artifact from the workflow run, unzip it, copy the `.deb` to the phone and install it with Sileo or Filza.
    It goes to `/var/jb/Applications/GalaxyBudsManager.app` and appears on the home screen as "Galaxy Buds".
 
-The app has no sandbox container, so its settings and log (`application.log`) are under the `mobile` user's home folder,
-in `Library/GalaxyBudsClient/` or `.local/share/GalaxyBudsClient/`.
+The app runs as an ordinary sandboxed app with its own data container, so its settings and log (`application.log`) are in
+`/var/mobile/Containers/Data/Application/<UUID>/` (find them with
+`find /var/mobile/Containers/Data/Application -name application.log -path "*GalaxyBudsClient*"`).
+
+Keep `packaging/entitlements.plist` minimal. With `platform-application` iOS denies the app the GPU, so Avalonia can't start
+Metal or OpenGL and the app aborts at launch.

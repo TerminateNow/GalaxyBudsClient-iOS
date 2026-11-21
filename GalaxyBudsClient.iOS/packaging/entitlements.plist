@@ -2,18 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Keep this minimal, like an ordinary App Store app. Tested on an iPhone 7 with iOS 15.8.8 and Dopamine:
+	  with platform-application (with or without no-container / no-sandbox) iOS denies the app the GPU
+	  (IOServiceOpen on IOAccelerator returns kIOReturnNotPermitted), so neither Metal nor OpenGL starts
+	  and Avalonia aborts at launch. With these entitlements uicache gives the app a normal data container,
+	  and the sandbox still allows the TCP connection to the BudsBridge service on 127.0.0.1.
+	-->
 	<key>application-identifier</key>
 	<string>com.galaxybudsclient.ios</string>
-	<key>platform-application</key>
-	<true/>
-	<key>com.apple.private.security.no-container</key>
-	<true/>
-	<!-- Without this, the app still gets a sandbox profile that denies opening the GPU
-	     (IOServiceOpen on IOAccelerator returns kIOReturnNotPermitted), so neither Metal nor OpenGL starts -->
-	<key>com.apple.private.security.no-sandbox</key>
-	<true/>
-	<key>com.apple.private.skip-library-validation</key>
-	<true/>
 	<key>get-task-allow</key>
 	<true/>
 </dict>

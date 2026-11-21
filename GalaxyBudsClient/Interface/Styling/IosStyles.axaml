@@ -228,6 +228,20 @@
         </ResourceDictionary>
     </Styles.Resources>
 
+    <!-- Header above a group of rows -->
+    <Style Selector="TextBlock.IosSectionHeader">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Margin" Value="16,0,16,6" />
+        <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+    </Style>
+    <!-- Value shown on the right of a row, before the chevron -->
+    <Style Selector="TextBlock.IosRowValue">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="MaxWidth" Value="130" />
+        <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+    </Style>
+
     <!-- Navigation bar buttons: plain accent-colored text and icons -->
     <Style Selector="Button.IosNavButton">
         <Setter Property="Background" Value="Transparent" />

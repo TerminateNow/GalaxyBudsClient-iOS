@@ -1,0 +1,212 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:GalaxyBudsClient.Interface.ViewModels.Controls"
+             xmlns:ext="clr-namespace:GalaxyBudsClient.Interface.MarkupExtensions"
+             xmlns:i18N="clr-namespace:GalaxyBudsClient.Generated.I18N"
+             x:Class="GalaxyBudsClient.Interface.Controls.IosBatteryCard"
+             x:DataType="vm:EarbudStatusUnitViewModel"
+             x:CompileBindings="True">
+    <!-- iOS design: battery card on the home screen. Rings for left, right and case, with either line icons
+         or the realistic product images (Settings > Appearance), and battery details that fold open. -->
+    <UserControl.Styles>
+        <Style Selector="StackPanel.Unit">
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Spacing" Value="6" />
+        </Style>
+        <Style Selector="Panel.Ring">
+            <Setter Property="Width" Value="68" />
+            <Setter Property="Height" Value="68" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Arc">
+            <Setter Property="Width" Value="63" />
+            <Setter Property="Height" Value="63" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="StrokeThickness" Value="5" />
+            <Setter Property="StartAngle" Value="-90" />
+        </Style>
+        <Style Selector="Arc.Track">
+            <Setter Property="Stroke" Value="{DynamicResource IosTrackBrush}" />
+            <Setter Property="SweepAngle" Value="360" />
+        </Style>
+        <Style Selector="Arc.Level">
+            <Setter Property="StrokeLineCap" Value="Round" />
+        </Style>
+        <Style Selector="Canvas.BudLines Path">
+            <Setter Property="Stroke" Value="{DynamicResource IosTextBrush}" />
+            <Setter Property="StrokeThickness" Value="15" />
+            <Setter Property="StrokeLineCap" Value="Round" />
+            <Setter Property="StrokeJoin" Value="Round" />
+        </Style>
+        <Style Selector="TextBlock.Percent">
+            <Setter Property="FontSize" Value="20" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.Caption">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="LineHeight" Value="17" />
+            <Setter Property="TextAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+        </Style>
+        <Style Selector="Border.Detail">
+            <Setter Property="Background" Value="{DynamicResource IosSurface2Brush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,8" />
+        </Style>
+        <Style Selector="Border.Detail TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="LineHeight" Value="19" />
+            <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+        </Style>
+        <Style Selector="Button#DetailsButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource IosAccentBrush}" />
+        </Style>
+        <Style Selector="Button#DetailsButton:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource IosAccentBrush}" />
+        </Style>
+        <Style Selector="Button#DetailsButton:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource IosAccentBrush}" />
+            <Setter Property="Opacity" Value="0.5" />
+        </Style>
+    </UserControl.Styles>
+
+    <Border Background="{DynamicResource IosSurfaceBrush}"
+            CornerRadius="12"
+            Padding="16,16,16,0"
+            Margin="0,0,0,20">
+        <StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Ellipse Name="StatusDot" Width="8" Height="8" VerticalAlignment="Center" />
+                <TextBlock Name="StatusText"
+                           FontSize="13"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource IosSecondaryTextBrush}" />
+            </StackPanel>
+
+            <UniformGrid Rows="1" Margin="0,16,0,0">
+                <!-- Left -->
+                <StackPanel Classes="Unit" Name="LeftUnit">
+                    <Panel Classes="Ring">
+                        <Arc Classes="Track" />
+                        <Arc Classes="Level" Name="LeftLevel" />
+                        <Viewbox Name="LeftLines" Width="42" Height="42">
+                            <Viewbox.RenderTransform>
+                                <TranslateTransform X="-2" />
+                            </Viewbox.RenderTransform>
+                            <Canvas Classes="BudLines" Width="230" Height="296">
+                                <Path Data="M 168.5 154 C 188.5 142 208.5 124 212.5 99 C 216.5 69 193.5 34 163.5 24 C 138.5 16 108.5 26 83.5 44 C 66.5 57 56.5 74 56.5 92 C 56.5 119 73.5 149 96.5 162 C 104.5 167 112.5 169 120.5 170" />
+                                <Path Data="M 127.5 110 V 264 L 142.5 275 L 169.5 263 V 156" />
+                                <Path Data="M 56.5 91 C 36.5 91 22.5 104 18.5 120 C 14.5 136 22.5 156 33.5 171 C 42.5 184 54.5 191 68.5 190 C 81.5 189 90.5 182 95.5 174" />
+                                <Path Data="M 155.5 79 L 173.5 66" />
+                            </Canvas>
+                        </Viewbox>
+                        <Image Name="LeftImage" Width="34" Height="36" IsVisible="False">
+                            <Image.RenderTransform>
+                                <TranslateTransform X="-2" />
+                            </Image.RenderTransform>
+                        </Image>
+                    </Panel>
+                    <TextBlock Classes="Percent" Name="LeftPercent" />
+                    <TextBlock Classes="Caption" Name="LeftCaption" />
+                </StackPanel>
+
+                <!-- Right: the left icon mirrored -->
+                <StackPanel Classes="Unit" Name="RightUnit">
+                    <Panel Classes="Ring">
+                        <Arc Classes="Track" />
+                        <Arc Classes="Level" Name="RightLevel" />
+                        <Viewbox Name="RightLines" Width="42" Height="42">
+                            <Viewbox.RenderTransform>
+                                <TranslateTransform X="2" />
+                            </Viewbox.RenderTransform>
+                            <Canvas Classes="BudLines" Width="230" Height="296">
+                                <Canvas.RenderTransform>
+                                    <ScaleTransform ScaleX="-1" />
+                                </Canvas.RenderTransform>
+                                <Path Data="M 168.5 154 C 188.5 142 208.5 124 212.5 99 C 216.5 69 193.5 34 163.5 24 C 138.5 16 108.5 26 83.5 44 C 66.5 57 56.5 74 56.5 92 C 56.5 119 73.5 149 96.5 162 C 104.5 167 112.5 169 120.5 170" />
+                                <Path Data="M 127.5 110 V 264 L 142.5 275 L 169.5 263 V 156" />
+                                <Path Data="M 56.5 91 C 36.5 91 22.5 104 18.5 120 C 14.5 136 22.5 156 33.5 171 C 42.5 184 54.5 191 68.5 190 C 81.5 189 90.5 182 95.5 174" />
+                                <Path Data="M 155.5 79 L 173.5 66" />
+                            </Canvas>
+                        </Viewbox>
+                        <Image Name="RightImage" Width="34" Height="36" IsVisible="False">
+                            <Image.RenderTransform>
+                                <TranslateTransform X="2" />
+                            </Image.RenderTransform>
+                        </Image>
+                    </Panel>
+                    <TextBlock Classes="Percent" Name="RightPercent" />
+                    <TextBlock Classes="Caption" Name="RightCaption" />
+                </StackPanel>
+
+                <!-- Case -->
+                <StackPanel Classes="Unit" Name="CaseUnit">
+                    <Panel Classes="Ring">
+                        <Arc Classes="Track" />
+                        <Arc Classes="Level" Name="CaseLevel" />
+                        <Viewbox Name="CaseLines" Width="40" Height="40">
+                            <Canvas Width="24" Height="24">
+                                <Rectangle Canvas.Left="2.5" Canvas.Top="6" Width="19" Height="13.5"
+                                           RadiusX="5" RadiusY="5"
+                                           Stroke="{DynamicResource IosTextBrush}" StrokeThickness="1.4" />
+                                <Line StartPoint="2.5,11" EndPoint="21.5,11"
+                                      Stroke="{DynamicResource IosTextBrush}" StrokeThickness="1.4" />
+                                <Ellipse Canvas.Left="11" Canvas.Top="14.6" Width="2" Height="2"
+                                         Fill="{DynamicResource IosTextBrush}" />
+                            </Canvas>
+                        </Viewbox>
+                        <Image Name="CaseImage" Width="35" Height="30" IsVisible="False" />
+                    </Panel>
+                    <TextBlock Classes="Percent" Name="CasePercent" />
+                    <TextBlock Classes="Caption" Name="CaseCaption" />
+                </StackPanel>
+            </UniformGrid>
+
+            <Border Margin="0,14,0,0"
+                    BorderThickness="0,0.5,0,0"
+                    BorderBrush="{DynamicResource IosSeparatorBrush}">
+                <Button Name="DetailsButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        MinHeight="44"
+                        Click="OnDetailsClicked">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Name="DetailsLabel" FontSize="15" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Name="DetailsSign" FontSize="17" VerticalAlignment="Center" />
+                    </Grid>
+                </Button>
+            </Border>
+
+            <UniformGrid Name="Details" Rows="1" ColumnSpacing="8" IsVisible="False" Margin="0,0,0,16">
+                <Border Classes="Detail">
+                    <StackPanel>
+                        <TextBlock Text="{ext:Translate {x:Static i18N:Keys.Left}}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource IosTextBrush}" />
+                        <TextBlock Name="LeftVoltageText" />
+                        <TextBlock Name="LeftCurrentText" />
+                        <TextBlock Name="LeftTemperatureText" />
+                    </StackPanel>
+                </Border>
+                <Border Classes="Detail">
+                    <StackPanel>
+                        <TextBlock Text="{ext:Translate {x:Static i18N:Keys.Right}}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource IosTextBrush}" />
+                        <TextBlock Name="RightVoltageText" />
+                        <TextBlock Name="RightCurrentText" />
+                        <TextBlock Name="RightTemperatureText" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+        </StackPanel>
+    </Border>
+</UserControl>

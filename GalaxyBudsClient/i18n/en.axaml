@@ -775,4 +775,17 @@ The name change may not be detected by devices (including this one) until you un
     <sys:String x:Key="spatial_open_audio_midi">Open Audio MIDI Setup</sys:String>
     <sys:String x:Key="spatial_open_sound_pref">Open Sound Settings</sys:String>
     <sys:String x:Key="spatial_windows_info">On Windows, system audio is captured natively via WASAPI Loopback without needing any third-party virtual drivers. Head tracking can also be broadcast to PC games via OpenTrack (port 4242) or VRChat via OSC (port 9000).</sys:String>
+    <!-- iOS design -->
+    <sys:String x:Key="ios_connected_bridge">Connected through BudsBridge</sys:String>
+    <sys:String x:Key="ios_not_connected">Not connected</sys:String>
+    <sys:String x:Key="ios_battery_details_show">Show battery details</sys:String>
+    <sys:String x:Key="ios_battery_details_hide">Hide battery details</sys:String>
+    <sys:String x:Key="ios_voltage">Voltage: {0:f2} V</sys:String>
+    <sys:String x:Key="ios_current">Current: {0:f2} mA</sys:String>
+    <sys:String x:Key="ios_temperature">Temperature: {0:f1} °{1}</sys:String>
+    <sys:String x:Key="ios_section_sound">Sound</sys:String>
+    <sys:String x:Key="ios_section_controls">Controls</sys:String>
+    <sys:String x:Key="ios_section_more">More</sys:String>
+    <sys:String x:Key="ios_temperature_unit">Temperature unit</sys:String>
+    <sys:String x:Key="ios_temperature_unit_desc">Used for the earbud temperatures in the battery details</sys:String>
 </ResourceDictionary>

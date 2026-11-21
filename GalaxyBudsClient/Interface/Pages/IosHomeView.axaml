@@ -1,0 +1,64 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:GalaxyBudsClient.Interface.Controls"
+             xmlns:i18N="clr-namespace:GalaxyBudsClient.Generated.I18N"
+             xmlns:ext="clr-namespace:GalaxyBudsClient.Interface.MarkupExtensions"
+             x:Class="GalaxyBudsClient.Interface.Pages.IosHomeView">
+    <!-- iOS design: home screen. Battery card, then the pages grouped like the iOS Settings app. -->
+    <ScrollViewer>
+        <StackPanel Margin="{StaticResource AppPageMargin}">
+            <controls:IosBatteryCard />
+
+            <TextBlock Classes="IosSectionHeader" Name="SoundHeader" />
+            <controls:SettingsGroup>
+                <controls:SettingsSymbolItem Name="NoiseControl"
+                                             Content="{ext:Translate {x:Static i18N:Keys.MainpageNoise}}"
+                                             Symbol="HeadphonesSoundWave"
+                                             ActionSymbol="ChevronRight"
+                                             IsClickEnabled="True">
+                    <controls:SettingsSymbolItem.Footer>
+                        <TextBlock Name="NoiseValue" Classes="IosRowValue" />
+                    </controls:SettingsSymbolItem.Footer>
+                </controls:SettingsSymbolItem>
+                <controls:SettingsSymbolItem Name="Equalizer"
+                                             Content="{ext:Translate {x:Static i18N:Keys.MainpageEqualizer}}"
+                                             Symbol="DeviceEq"
+                                             ActionSymbol="ChevronRight"
+                                             IsClickEnabled="True" />
+                <controls:SettingsSymbolItem Name="SpatialAudio"
+                                             Content="{ext:Translate {x:Static i18N:Keys.PageSpatialAudio}}"
+                                             Symbol="SoundWaveCircle"
+                                             ActionSymbol="ChevronRight"
+                                             IsClickEnabled="True" />
+            </controls:SettingsGroup>
+
+            <TextBlock Classes="IosSectionHeader" Name="ControlsHeader" />
+            <controls:SettingsGroup>
+                <controls:SettingsSymbolItem Name="Touchpad"
+                                             Content="{ext:Translate {x:Static i18N:Keys.MainpageTouchpad}}"
+                                             Symbol="HandDraw"
+                                             ActionSymbol="ChevronRight"
+                                             IsClickEnabled="True" />
+                <controls:SettingsSymbolItem Name="FindMyBuds"
+                                             Content="{ext:Translate {x:Static i18N:Keys.MainpageFindMyEarbuds}}"
+                                             Symbol="LocationLive"
+                                             ActionSymbol="ChevronRight"
+                                             IsClickEnabled="True" />
+            </controls:SettingsGroup>
+
+            <TextBlock Classes="IosSectionHeader" Name="MoreHeader" />
+            <controls:SettingsGroup>
+                <controls:SettingsSymbolItem Name="Advanced"
+                                             Content="{ext:Translate {x:Static i18N:Keys.MainpageAdvanced}}"
+                                             Symbol="WrenchScrewdriver"
+                                             ActionSymbol="ChevronRight"
+                                             IsClickEnabled="True" />
+                <controls:SettingsSymbolItem Name="System"
+                                             Content="{ext:Translate {x:Static i18N:Keys.MainpageSystem}}"
+                                             Symbol="Apps"
+                                             ActionSymbol="ChevronRight"
+                                             IsClickEnabled="True" />
+            </controls:SettingsGroup>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

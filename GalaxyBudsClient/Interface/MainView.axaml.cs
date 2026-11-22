@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -459,6 +460,9 @@ public partial class MainView : UserControl
         FABreadcrumbBar.IsVisible = false;
         IosNavBar.IsVisible = true;
         IosLargeTitle.IsVisible = true;
+        // ApplySafeArea places the header and content itself. Avalonia's automatic safe area padding (on by default)
+        // would inset the whole view by the status bar a second time, leaving a gap above the header.
+        TopLevel.SetAutoSafeAreaPadding(this, false);
         this[!BackgroundProperty] = this.GetResourceObservable("IosBackgroundBrush").ToBinding();
         BluetoothImpl.Instance.PropertyChanged += (_, args) =>
         {
@@ -481,8 +485,17 @@ public partial class MainView : UserControl
         if (page == null)
             return string.Empty;
         if (page is HomePageViewModel)
-            return BluetoothImpl.Instance.DeviceName;
+            return StripAddressSuffix(BluetoothImpl.Instance.DeviceName);
         return Loc.ResolveOrDefault(page.TitleKey) ?? page.FallbackTitle;
+    }
+
+    // "Galaxy Buds3 Pro (0D81)" -> "Galaxy Buds3 Pro": the buds add the end of their address to the Bluetooth name
+    private static readonly Regex AddressSuffix = new(@"\s*\([0-9A-Fa-f]{4}\)\s*$", RegexOptions.Compiled);
+
+    internal static string StripAddressSuffix(string name)
+    {
+        var stripped = AddressSuffix.Replace(name, string.Empty);
+        return stripped.Length > 0 ? stripped : name;
     }
 
     private void UpdateIosNavBar(PageViewModelBase? page)
@@ -491,15 +504,10 @@ public partial class MainView : UserControl
         IosLargeTitle.Text = title;
         IosInlineTitle.Text = title;
 
-        PageViewModelBase? previous = null;
-        if (FrameView.BackStackDepth > 0)
-            previous = ResolveViewModelByType(FrameView.BackStack[^1].SourcePageType);
-
         IosBackButton.IsVisible = FrameView.CanGoBack && page is not (HomePageViewModel or WelcomePageViewModel);
-        IosBackLabel.Text = previous is HomePageViewModel
-            ? Loc.ResolveOrDefault(previous.TitleKey) ?? previous.FallbackTitle
-            : ResolveTitle(previous);
         IosSettingsButton.IsVisible = page is HomePageViewModel or WelcomePageViewModel;
+        // The large title shares the row with the back chevron; without it, it lines up with the content (20 pt)
+        IosLargeTitle.Margin = new Thickness(IosBackButton.IsVisible ? 4 : 12, 0, 4, 0);
 
         SetIosTitleCollapsed(false);
         if (_iosScrollViewer != null)
@@ -533,6 +541,8 @@ public partial class MainView : UserControl
             return;
         IosLargeTitle.IsVisible = !collapsed;
         IosInlineTitle.Opacity = collapsed ? 1 : 0;
+        // The header shrinks with the title: 52 pt with the large title, the standard 44 pt with the small one
+        IosNavBar.Height = collapsed ? 44 : 52;
     }
 
     private void OnIosBackClicked(object? sender, RoutedEventArgs e) => GoBack();

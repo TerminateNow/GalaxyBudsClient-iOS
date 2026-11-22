@@ -201,7 +201,10 @@
                                     <BrushTransition Property="Background" Duration="0:0:0.2" />
                                 </Transitions>
                             </Border.Transitions>
-                            <Canvas Name="PART_SwitchKnob" Width="51" Height="31">
+                            <!-- ToggleSwitch moves PART_MovingKnobs by PART_SwitchKnob's width when checked (and clamps
+                                 dragging to it), so this canvas is only as wide as the knob's travel: track 51 - knob 31.
+                                 A canvas as wide as the track pushed the knob out of sight when the switch was on. -->
+                            <Canvas Name="PART_SwitchKnob" Width="20" Height="31" HorizontalAlignment="Left">
                                 <Panel Name="PART_MovingKnobs" Width="31" Height="31" Canvas.Left="0">
                                     <Panel.Transitions>
                                         <Transitions>

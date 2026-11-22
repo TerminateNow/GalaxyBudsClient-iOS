@@ -155,5 +155,13 @@ section). `MainView` swaps the sidebar and breadcrumbs for an iOS navigation bar
 - Preview it on Linux by setting `GBC_IOS_DESIGN=1`, for example with an Avalonia.Headless harness that renders `MainView` at 375×667.
 - Don't set `FANavigationView.IsPaneVisible = false`: it loops forever in layout. Use `PaneDisplayMode = LeftMinimal` with the toggle hidden.
 - Type selectors don't match `SettingsSymbolItem` subclasses (their style key is `FASettingsExpanderItem`), so the controls add classes (`SliderItem`, `ComboItem`) for styling.
+- Header: one row (`IosNavBar`) right below the status bar. At the top of a page it's 52 pt with the large title next to the
+  back chevron (no back label) or before the settings button; scrolled, it's 44 pt with the small centered title (`SetIosTitleCollapsed`).
+  The home title is the device name without the trailing address code (`StripAddressSuffix`: "Galaxy Buds3 Pro (0D81)" → "Galaxy Buds3 Pro").
+- Avalonia 12's `TopLevel.AutoSafeAreaPadding` (on by default) pads the main view by the safe area. `MainView` turns it off for
+  the iPhone design because `ApplySafeArea` places the header itself; with both, the header sat a status bar too low. The harness
+  has no insets manager, so it can't show this: call `ApplySafeArea` with `0,20,0,0` (iPhone 7) by reflection to preview the inset.
+- `ToggleSwitch` moves `PART_MovingKnobs` by the width of `PART_SwitchKnob` when checked, so that canvas must be only as wide as
+  the knob's travel (track 51 − knob 31 = 20). As wide as the track, the knob ends up out of sight when the switch is on.
 
 Details are in `GalaxyBudsClient.iOS/README.md`.

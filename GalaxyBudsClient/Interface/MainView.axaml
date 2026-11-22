@@ -27,35 +27,39 @@
                            Name="NavView"
                            IsSettingsVisible="False"
                            IsBackEnabled="{Binding #FrameView.CanGoBack}">
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto,*"
+            <Grid RowDefinitions="Auto,Auto,Auto,*"
                   Name="ContentContainer">
 
-                <!-- iOS design: navigation bar (back, collapsed title, settings) and large title -->
+                <!-- iOS design: one header row right below the status bar. At the top of a page it shows the large
+                     title (with the back chevron and the settings button); scrolled, it is shorter and shows the
+                     small centered title instead (MainView.SetIosTitleCollapsed). -->
                 <Grid Grid.Row="0"
                       Name="IosNavBar"
                       IsVisible="False"
-                      Height="44"
+                      Height="52"
                       ColumnDefinitions="Auto,*,Auto">
                     <Button Grid.Column="0"
                             Name="IosBackButton"
                             Classes="IosNavButton"
                             IsVisible="False"
                             Click="OnIosBackClicked">
-                        <StackPanel Orientation="Horizontal" Spacing="4">
-                            <Path Data="M10 2L2 10l8 8"
-                                  Width="12" Height="20"
-                                  Stroke="{Binding $parent[Button].Foreground}"
-                                  StrokeThickness="2.6"
-                                  StrokeLineCap="Round"
-                                  StrokeJoin="Round"
-                                  VerticalAlignment="Center" />
-                            <TextBlock Name="IosBackLabel"
-                                       FontSize="17"
-                                       MaxWidth="140"
-                                       TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center" />
-                        </StackPanel>
+                        <Path Data="M10 2L2 10l8 8"
+                              Width="12" Height="20"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="2.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round"
+                              VerticalAlignment="Center" />
                     </Button>
+                    <TextBlock Grid.Column="1"
+                               Name="IosLargeTitle"
+                               IsVisible="False"
+                               FontSize="32"
+                               FontWeight="Bold"
+                               LetterSpacing="-0.5"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"
+                               Margin="12,0,4,0" />
                     <TextBlock Grid.Column="0" Grid.ColumnSpan="3"
                                Name="IosInlineTitle"
                                FontSize="17"
@@ -80,16 +84,8 @@
                         <ic:SymbolIcon Symbol="Settings" FontSize="24" />
                     </Button>
                 </Grid>
-                <TextBlock Grid.Row="1"
-                           Name="IosLargeTitle"
-                           IsVisible="False"
-                           FontSize="32"
-                           FontWeight="Bold"
-                           LetterSpacing="-0.5"
-                           TextWrapping="Wrap"
-                           Margin="20,2,20,12" />
-                
-                <ui:FAInfoBar Grid.Row="2"
+
+                <ui:FAInfoBar Grid.Row="1"
                             Title="{ext:Translate {x:Static i18N:Keys.PlacementDisconnected}}"
                             IsClosable="False"
                             Severity="Warning"
@@ -126,7 +122,7 @@
 
                 <ui:FABreadcrumbBar Name="FABreadcrumbBar"
                                   MinHeight="56"
-                                  Grid.Row="3"
+                                  Grid.Row="2"
                                   ItemsSource="{Binding BreadcrumbItems}"
                                   Margin="20,10">
                     <ui:FABreadcrumbBar.ItemTemplate>
@@ -137,7 +133,7 @@
                     </ui:FABreadcrumbBar.ItemTemplate>
                 </ui:FABreadcrumbBar>
 
-                <ui:FAFrame Grid.Row="4" Name="FrameView" />
+                <ui:FAFrame Grid.Row="3" Name="FrameView" />
             </Grid>
         </ui:FANavigationView>
 

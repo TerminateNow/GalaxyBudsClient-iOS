@@ -156,7 +156,12 @@ section). `MainView` swaps the sidebar and breadcrumbs for an iOS navigation bar
 - Don't set `FANavigationView.IsPaneVisible = false`: it loops forever in layout. Use `PaneDisplayMode = LeftMinimal` with the toggle hidden.
 - Type selectors don't match `SettingsSymbolItem` subclasses (their style key is `FASettingsExpanderItem`), so the controls add classes (`SliderItem`, `ComboItem`) for styling.
 - Header: one row (`IosNavBar`) right below the status bar. At the top of a page it's 52 pt with the large title next to the
-  back chevron (no back label) or before the settings button; scrolled, it's 44 pt with the small centered title (`SetIosTitleCollapsed`).
+  back chevron (no back label) or before the settings button; scrolled past 40 pt, it animates to 40 pt (250 ms, cubic ease-out)
+  while the large title fades out and the small centered title fades in (`SetIosTitleCollapsed`; the large title stays in the
+  layout at opacity 0). Transitions are set in `InitializeIosShell`.
+- The disconnect warning (`DisconnectedInfoBar`) floats at the bottom over the page on iOS (row of the frame, `ZIndex`, visible only
+  while open, opaque `IosBannerBrush`). In its own row under the header it kept its 16 pt top margin even when closed, leaving
+  an empty strip. The harness is never connected, so it shows the banner open; hide it to preview the connected layout.
   The home title is the device name without the trailing address code (`StripAddressSuffix`: "Galaxy Buds3 Pro (0D81)" → "Galaxy Buds3 Pro").
 - Avalonia 12's `TopLevel.AutoSafeAreaPadding` (on by default) pads the main view by the safe area. `MainView` turns it off for
   the iPhone design because `ApplySafeArea` places the header itself; with both, the header sat a status bar too low. The harness

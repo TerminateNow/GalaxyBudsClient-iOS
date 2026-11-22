@@ -23,6 +23,7 @@
                     <SolidColorBrush x:Key="IosTrackBrush" Color="#3A3A3C" />
                     <SolidColorBrush x:Key="IosSwitchOffBrush" Color="#39393D" />
                     <SolidColorBrush x:Key="IosNavBarBrush" Color="#D1000000" />
+                    <SolidColorBrush x:Key="IosBannerBrush" Color="#3A3220" />
                     <!-- FluentAvalonia surfaces that should blend into the iOS background -->
                     <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#000000" />
                     <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
@@ -41,6 +42,7 @@
                     <SolidColorBrush x:Key="IosTrackBrush" Color="#E3E3E8" />
                     <SolidColorBrush x:Key="IosSwitchOffBrush" Color="#E9E9EA" />
                     <SolidColorBrush x:Key="IosNavBarBrush" Color="#D9F2F2F7" />
+                    <SolidColorBrush x:Key="IosBannerBrush" Color="#FFF4CE" />
                     <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#F2F2F7" />
                     <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
                     <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFF" />

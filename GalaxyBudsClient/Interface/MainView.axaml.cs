@@ -5,7 +5,11 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Avalonia.Controls.Platform;
@@ -460,6 +464,26 @@ public partial class MainView : UserControl
         FABreadcrumbBar.IsVisible = false;
         IosNavBar.IsVisible = true;
         IosLargeTitle.IsVisible = true;
+        IosLargeTitle.IsHitTestVisible = false;
+
+        // Collapsing on scroll: the header height and the two titles animate (SetIosTitleCollapsed)
+        var duration = TimeSpan.FromMilliseconds(250);
+        IosNavBar.Transitions =
+            [new DoubleTransition { Property = HeightProperty, Duration = duration, Easing = new CubicEaseOut() }];
+        IosLargeTitle.Transitions =
+            [new DoubleTransition { Property = OpacityProperty, Duration = TimeSpan.FromMilliseconds(150) }];
+        IosInlineTitle.Transitions =
+            [new DoubleTransition { Property = OpacityProperty, Duration = TimeSpan.FromMilliseconds(200), Delay = TimeSpan.FromMilliseconds(50) }];
+
+        // The disconnect warning floats at the bottom, over the page, instead of taking a row under the header.
+        // In that row, even closed, it kept its top margin and left an empty strip below the header.
+        Grid.SetRow(DisconnectedInfoBar, 3);
+        DisconnectedInfoBar.ZIndex = 10;
+        DisconnectedInfoBar.VerticalAlignment = VerticalAlignment.Bottom;
+        DisconnectedInfoBar.Margin = new Thickness(16, 0, 16, 16);
+        DisconnectedInfoBar[!IsVisibleProperty] = DisconnectedInfoBar[!FAInfoBar.IsOpenProperty];
+        DisconnectedInfoBar[!BackgroundProperty] = DisconnectedInfoBar.GetResourceObservable("IosBannerBrush").ToBinding();
+        DisconnectedInfoBar.Effect = new DropShadowEffect { BlurRadius = 16, OffsetY = 2, Color = Color.Parse("#80000000") };
         // ApplySafeArea places the header and content itself. Avalonia's automatic safe area padding (on by default)
         // would inset the whole view by the status bar a second time, leaving a gap above the header.
         TopLevel.SetAutoSafeAreaPadding(this, false);
@@ -535,14 +559,20 @@ public partial class MainView : UserControl
             SetIosTitleCollapsed(false);
     }
 
+    private const double IosNavBarExpanded = 52;
+    private const double IosNavBarCollapsed = 40;
+    private bool _iosTitleCollapsed;
+
     private void SetIosTitleCollapsed(bool collapsed)
     {
-        if (IosLargeTitle.IsVisible == !collapsed)
+        if (_iosTitleCollapsed == collapsed)
             return;
-        IosLargeTitle.IsVisible = !collapsed;
+        _iosTitleCollapsed = collapsed;
+        // The large title fades out while the small one fades in and the header shrinks from 52 to 40 pt
+        // (transitions set in InitializeIosShell). The large title stays in the layout at opacity 0.
+        IosLargeTitle.Opacity = collapsed ? 0 : 1;
         IosInlineTitle.Opacity = collapsed ? 1 : 0;
-        // The header shrinks with the title: 52 pt with the large title, the standard 44 pt with the small one
-        IosNavBar.Height = collapsed ? 44 : 52;
+        IosNavBar.Height = collapsed ? IosNavBarCollapsed : IosNavBarExpanded;
     }
 
     private void OnIosBackClicked(object? sender, RoutedEventArgs e) => GoBack();

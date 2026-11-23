@@ -87,9 +87,13 @@ Both are built on Linux or WSL2, without Xcode:
   It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
   - **Background service:** `layout/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` runs `budsrfcomm daemon` as `mobile` on `127.0.0.1:8762`.
     The package's `postinst` loads it and restarts `bluetoothd`, so the tweak loads. `prerm` unloads it, and `postrm` restarts `bluetoothd` on removal.
-  - **Protocol, which is what the iOS app's `IBluetoothService` must speak:** one command line, either `PING`, `LIST`, or `CONNECT [MAC] [channel]`.
+  - **Protocol, which is what the iOS app's `IBluetoothService` must speak:** one command line, either `PING`, `LIST`, `CONNECT [MAC] [channel]` or `NOISE [mode]`.
     `CONNECT` answers `OK <channel>` and then passes raw bytes in both directions. Only one `CONNECT` can be active, and others get `ERR busy`.
-    The protocol is specified in `ios/BudsBridge/README.md`.
+    `NOISE` (0.4.0) reads or sets the noise control mode. During a `CONNECT` session it slips a `0x78` frame in between the app's frames
+    (the pump forwards client data frame by frame once the Buds have sent an `FD` frame) and sends the app a fake `0x77` update;
+    without one it opens a short session. The protocol is specified in `ios/BudsBridge/README.md`.
+- **`ccmodule/`:** a CCSupport Control Center module (separate package `com.galaxybudsclient.noisecc`, `make package-cc`) that speaks `NOISE`.
+  It subclasses ControlCenterUIKit's `CCUIMenuModuleViewController`. The private API it uses was read from the device's runtime and is listed in `research/NOTES.md`.
   - **Settings:** `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist` holds `Address` (the default device),
     `Channels` (MAC to RFCOMM channel) and `Port`. They're reread on every connection. A channel that works is saved per device.
     Without a MAC or a saved default, the paired device whose name contains "Buds" is used.
@@ -103,12 +107,15 @@ Both are built on Linux or WSL2, without Xcode:
   - Every address and signature, and how each was found, is in `research/NOTES.md`. Update that file whenever addresses or assumptions change.
 
 Build it as below. The output goes to `build/`. Commit the resulting `.deb` to `dist/` and remove the old one.
+Ubuntu's lld has no `ld64.lld` name: make a symlink with that name to `lld` and pass `LD64=`.
 
 ```bash
-make -C ios/BudsBridge package SDK=/path/to/iPhoneOS15.6.sdk LDID=/path/to/ldid
+make -C ios/BudsBridge package package-cc SDK=/path/to/iPhoneOS15.6.sdk LDID=/path/to/ldid
 ```
 
-Bump the version in both `layout/DEBIAN/control` and `BB_VERSION` in `src/budsrfcomm.m` when shipping a new `.deb`.
+Bump the version in both `layout/DEBIAN/control` and `BB_VERSION` in `src/budsrfcomm.m` when shipping a new `.deb`
+(the Control Center module's version is in `ccmodule/control` and `ccmodule/Info.plist`).
+To try a build on the device before installing, run it from under `/var/jb/` (Dopamine kills unsigned binaries run from `/tmp`), on a spare port such as `-p 8763`.
 
 Rules that came out of on-device testing:
 - `-[CBClassicManager connectPeer:options:]` crashes if `options` is nil. Pass `@{}`.
@@ -117,7 +124,11 @@ Rules that came out of on-device testing:
   bounces all work onto its own serial queue.
 
 Verified on device: an iPhone 7 on 15.8.8 talks to Galaxy Buds3 Pro on RFCOMM **channel 20**.
-The 0.3.1 background service (`PING`, `LIST`, `CONNECT`, saved settings, launchd) is also verified on that device.
+The 0.3.1 background service (`PING`, `LIST`, `CONNECT`, saved settings, launchd) is also verified on that device, and so is
+0.4.0's `NOISE` (short sessions and injection into a `CONNECT` session).
+Buds3 Pro findings from that device (details in `research/NOTES.md`): noise control including Adaptive works; the 360 Audio
+head-tracking messages (`0x7c`, `0xc3`) and the "Hi Bixby" wake-word event are ignored or never sent, so the app's 360 Audio
+page can't get head tracking from Buds3 Pro as written.
 Each cloud session starts without the SDK or `ldid`. Download them into the scratchpad first: `theos/sdks` (`iPhoneOS15.6.sdk`) and `ProcursusTeam/ldid` releases (`ldid_linux_x86_64`).
 ### iOS app head (`GalaxyBudsClient.iOS/`)
 

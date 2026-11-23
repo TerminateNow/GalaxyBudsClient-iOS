@@ -143,3 +143,39 @@ iPhone 7, iOS 15.8.8 (19H422), Dopamine, Galaxy Buds3 Pro (firmware `R630XXU0AZG
   **Channel 20** is the Samsung SPP service.
 - On open (frame size 669), the buds send `EXTENDED_STATUS_UPDATED` (0x61, revision 4), then 0x68 (firmware string), 0xCD and 0x0F.
   All 7 frames had valid CRCs. Note that the high byte of the header can carry 0x40/0x80/0xC0 flags (bits 6 and 7), which `budsrfcomm`'s decoder ignores.
+
+## Buds3 Pro protocol tests over the bridge (2026-11-22/23, 0.3.1 and 0.4.0)
+
+Same phone and Buds (firmware `R630XXU0AZG2`). Commands were sent through `CONNECT` with `nc`, and every reply frame was decoded.
+
+- **Header bits 6–7 are a sequence counter.** In frames from the Buds, the top two bits of the size field's high byte
+  count `00`, `40`, `80`, `C0`, `00`, … with each frame. The app always sends `00` there, and the Buds accept that.
+- **Writes work.** `MANAGER_INFO` (`88 01 01 22`, as the app sends it) gets a reply (`88`, response flag, payload `00`) every time,
+  also when sent twice in one session, and `OI_RFCOMM_Write` reports no errors in the tweak's log.
+- **Noise control works.** `NOISE_CONTROLS` (`0x78`) with `0`–`3` changes the mode. The Buds don't answer it, but payload byte 12
+  of the next `EXTENDED_STATUS_UPDATED` shows the new mode. **Adaptive (`3`) works on Buds3 Pro**, although the app's
+  `Buds3ProDeviceSpec` doesn't list `Features.NoiseControlAdaptive`.
+- **Head tracking (360 Audio) is ignored.** After the handshake, with music playing, the Buds don't answer `SET_SPATIAL_AUDIO`
+  (`7c 01`), `SPATIAL_AUDIO_CONTROL` attach (`c3 00`), keep-alive (`c3 04`) or "sensor supported?" (`c3 06`), send no
+  orientation data (`c2 20`), and their status doesn't change. The app's `SpatialSensorManager` was written for Buds2 Pro.
+  How Samsung's app starts head tracking on Buds3 Pro is unknown.
+- **The wake word turns on but never fires.** `SET_VOICE_WAKE_UP` (`0x97`) and `VOICE_WAKE_UP_LANGUAGE` (`0x99`) change status
+  bytes 13 (on/off) and 18 (language: it was `7`, pt-BR; set to `2`, en-US). Saying "Hi Bixby" produced no
+  `VOICE_WAKE_UP_EVENT` (`0x9a`) in either language setting, and nothing happened on the phone. The settings were restored afterwards.
+- **Dopamine and `/tmp`:** an ad-hoc signed test binary is killed (`Killed: 9`) when run from `/tmp`, but runs from
+  `/var/jb/var/mobile/…`.
+
+## Control Center (iOS 15.8, for the noise control module)
+
+Read from the device's runtime with a small class-dump tool (`objc_copyClassList`-style introspection, run as `mobile`):
+
+- `CCUIMenuModuleViewController : CCUIButtonModuleViewController : UIViewController` has `setMenuItems:`, `addActionWithTitle:glyph:handler:`,
+  `addActionWithTitle:subtitle:glyph:handler:`, `removeAllActions`, `setTitle:`, `setSubtitle:`, `setBusy:`,
+  `setUseTrailingCheckmarkLayout:`, `leadingImageForMenuItem:` and `menuItemForIdentifier:`.
+- `CCUIMenuModuleItem` has `initWithTitle:identifier:handler:` and `selected`, `busy`, `subtitle`; `performAction` returns `BOOL`.
+- `CCUIButtonModuleViewController` has `glyphImage`, `selectedGlyphImage`, `selected`, `expanded` and `buttonTapped:forEvent:`.
+- `CCUIContentModule` (protocol, all optional): `contentViewController`, `contentViewControllerForContext:`, `setContentModuleContext:`, `backgroundViewController`.
+  `CCUIContentModuleContentViewController` requires `preferredExpandedContentHeight`; `controlCenterWillPresent` is optional.
+- CCSupport 1.3.13 (rootless) loads bundles from `/var/jb/Library/ControlCenter/Bundles`. Its `Info.plist` keys are
+  `CCSModuleSize` (`Portrait`/`Landscape` → `Width`/`Height`) and `CCSGetModuleSizeAtRuntime`. The name in Settings is `CFBundleDisplayName`.
+- The SF Symbols used (`ear`, `ear.fill`, `ear.and.waveform`, `wand.and.stars`) exist on the device.

@@ -9,6 +9,7 @@
 //   budsrfcomm daemon [-p port]              background bridge for the app (launchd), see PROTOCOL below
 //   budsrfcomm config [MAC] [-c ch] [-p port] show or set the default device / its channel / the port
 //   budsrfcomm forget                        clear the remembered settings
+//   budsrfcomm noise [mode]                  show or set the noise control mode through the daemon
 //
 // MAC defaults to the remembered device, else the paired device named "...Buds...". Channels that work
 // are remembered per device in the settings file below.
@@ -18,6 +19,7 @@
 #import "PrivateCoreBluetooth.h"
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -30,7 +32,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define BB_VERSION "0.3.1"
+#define BB_VERSION "0.4.0"
 #define BB_DEFAULT_PORT 8762
 #define BB_CONFIG_PATH "/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist"
 #define BB_MOBILE_UID 501
@@ -179,6 +181,109 @@ static int DecodeFrames(NSMutableData *buf) {
         if (want == got) valid++;
         [buf replaceBytesInRange:NSMakeRange(0, total) withBytes:NULL length:0];
     }
+}
+
+static double Now(void) {
+    struct timeval tv; gettimeofday(&tv, NULL);
+    return tv.tv_sec + tv.tv_usec / 1e6;
+}
+
+// Splits a byte stream into Buds frames (FD framing). Bytes that aren't part of a frame are passed on as
+// non-frame segments, and an incomplete frame is held back until the rest arrives. isEmpty means the stream is
+// at a frame boundary, so a frame of our own can be slipped in without splitting one.
+typedef void (^BBSegmentBlock)(const uint8_t *p, size_t len, BOOL isFrame, BOOL crcOK);
+
+@interface BBFramer : NSObject
+@property (nonatomic, readonly) NSMutableData *buf;
+@end
+@implementation BBFramer
+- (instancetype)init { if ((self = [super init])) _buf = [NSMutableData data]; return self; }
+- (BOOL)isEmpty { return _buf.length == 0; }
+- (void)feed:(const uint8_t *)p length:(size_t)n each:(BBSegmentBlock)each {
+    [_buf appendBytes:p length:n];
+    for (;;) {
+        const uint8_t *b = _buf.bytes; size_t len = _buf.length;
+        if (!len) return;
+        size_t cut; BOOL isFrame = NO, ok = NO;
+        if (b[0] != 0xFD) {
+            cut = 1;
+            while (cut < len && b[cut] != 0xFD) cut++;
+        } else {
+            if (len < 3) return;
+            size_t size = (b[1] | (b[2] << 8)) & 0x3FF, total = size + 4;
+            if (size < 3) cut = 1;
+            else if (len < total) return;
+            else if (b[total - 1] != 0xDD) cut = 1;
+            else {
+                cut = total; isFrame = YES;
+                ok = Crc16(b + 3, size - 2) == (uint16_t)(b[total - 3] | (b[total - 2] << 8));
+            }
+        }
+        each(b, cut, isFrame, ok);
+        [_buf replaceBytesInRange:NSMakeRange(0, cut) withBytes:NULL length:0];
+    }
+}
+@end
+
+#pragma mark - Noise control (NOISE command)
+
+// Message IDs (GalaxyBudsClient/Message/SppMessageEnums.cs)
+#define MSG_EXTENDED_STATUS_UPDATED 0x61
+#define MSG_NOISE_CONTROLS_UPDATE   0x77   // buds -> phone: payload[0] = mode
+#define MSG_NOISE_CONTROLS          0x78   // phone -> buds: payload[0] = mode
+#define MSG_MANAGER_INFO            0x88
+
+// NoiseControlModes: 0 off, 1 ANC, 2 ambient, 3 adaptive
+static NSString *NoiseModeName(int m) {
+    switch (m) { case 0: return @"off"; case 1: return @"anc"; case 2: return @"ambient"; case 3: return @"adaptive"; }
+    return @"unknown";
+}
+
+static int NoiseModeFromName(NSString *s) {
+    s = s.lowercaseString;
+    if ([s isEqualToString:@"off"] || [s isEqualToString:@"0"]) return 0;
+    if ([s isEqualToString:@"anc"] || [s isEqualToString:@"1"]) return 1;
+    if ([s isEqualToString:@"ambient"] || [s isEqualToString:@"2"]) return 2;
+    if ([s isEqualToString:@"adaptive"] || [s isEqualToString:@"3"]) return 3;
+    return -1;
+}
+
+static NSData *BuildFrame(uint8_t msgId, const uint8_t *payload, size_t len) {
+    uint16_t size = (uint16_t)(len + 3);  // id + payload + crc
+    NSMutableData *d = [NSMutableData dataWithCapacity:len + 7];
+    uint8_t head[4] = {0xFD, (uint8_t)(size & 0xFF), (uint8_t)(size >> 8), msgId};
+    [d appendBytes:head length:4];
+    if (len) [d appendBytes:payload length:len];
+    uint16_t crc = Crc16((const uint8_t *)d.bytes + 3, 1 + len);
+    uint8_t tail[3] = {(uint8_t)(crc & 0xFF), (uint8_t)(crc >> 8), 0xDD};
+    [d appendBytes:tail length:3];
+    return d;
+}
+
+// State shared by the session pump and NOISE requests.
+static pthread_mutex_t gStateLock = PTHREAD_MUTEX_INITIALIZER;
+static int gNoiseMode = -1;              // last known mode, -1 = unknown
+static double gNoiseModeTime = 0;        // when it was learned
+static BOOL gSessionActive = NO;         // a CONNECT session (the app) is being pumped
+static BOOL gSessionAligned = NO;        // ... and the buds use FD framing, so frames can be slipped in
+static NSMutableArray<NSData *> *gToBuds, *gToClient;  // frames to slip into the active session
+static int gWake[2] = {-1, -1};          // pipe that wakes the pump when frames are queued
+
+static void SetNoiseMode(int mode) {
+    if (mode < 0 || mode > 3) return;
+    pthread_mutex_lock(&gStateLock);
+    gNoiseMode = mode; gNoiseModeTime = Now();
+    pthread_mutex_unlock(&gStateLock);
+}
+
+// Learn the noise mode from a complete, CRC-valid frame. Returns the message ID.
+static uint8_t ObserveFrame(const uint8_t *f, size_t len, BOOL fromBuds) {
+    uint8_t msgId = f[3];
+    const uint8_t *pl = f + 4; size_t plen = len - 7;
+    if (fromBuds && msgId == MSG_EXTENDED_STATUS_UPDATED && plen > 12) SetNoiseMode(pl[12]);
+    else if (fromBuds && msgId == MSG_NOISE_CONTROLS_UPDATE && plen >= 1) SetNoiseMode(pl[0]);
+    else if (!fromBuds && msgId == MSG_NOISE_CONTROLS && plen >= 1) SetNoiseMode(pl[0]);
+    return msgId;
 }
 
 
@@ -536,28 +641,74 @@ static BOOL WriteStr(int fd, NSString *str) {
     return WriteAll(fd, (const uint8_t *)c, strlen(c));
 }
 
+// Write the frames queued by NOISE requests, each direction only at a frame boundary.
+static BOOL FlushQueued(int rfd, int cfd, BOOL budsBoundary, BOOL clientBoundary) {
+    BOOL ok = YES;
+    pthread_mutex_lock(&gStateLock);
+    if (budsBoundary) {
+        for (NSData *d in gToBuds) {
+            if (gVerbose) HexDump("<< (noise)", d.bytes, d.length);
+            if (!WriteAll(rfd, d.bytes, d.length)) { ok = NO; break; }
+        }
+        [gToBuds removeAllObjects];
+    }
+    if (ok && clientBoundary) {
+        for (NSData *d in gToClient) WriteAll(cfd, d.bytes, d.length);  // the client may be gone; the read side notices
+        [gToClient removeAllObjects];
+    }
+    pthread_mutex_unlock(&gStateLock);
+    return ok;
+}
+
 // Copy bytes between a client socket and the open RFCOMM channel until either side closes.
+// Once the buds have sent a valid FD frame, client data is forwarded frame by frame, so NOISE requests can slip
+// their own frames in between (and tell the client about the change with a NOISE_CONTROLS_UPDATE frame).
 static void Pump(BBSession *s, int cfd) {
     int rfd = s.channel.socketFD;
     uint8_t buf[4096];
+    BBFramer *budsFrames = [BBFramer new], *clientFrames = [BBFramer new];
+    __block BOOL aligned = NO;
     for (;;) {
-        struct pollfd p[2] = {{cfd, POLLIN, 0}, {rfd, POLLIN, 0}};
-        int r = poll(p, 2, 500);
+        struct pollfd p[3] = {{cfd, POLLIN, 0}, {rfd, POLLIN, 0}, {gWake[0], POLLIN, 0}};
+        int r = poll(p, gWake[0] >= 0 ? 3 : 2, 500);
         if (s.channelClosed) { BBLog("rfcomm channel closed"); break; }
         if (gStop) { BBLog("stopping: closing session"); break; }
         if (r < 0) { if (errno == EINTR) continue; break; }
-        if (r == 0) continue;
+        if (gWake[0] >= 0 && (p[2].revents & POLLIN)) { char drain[64]; while (read(gWake[0], drain, sizeof drain) > 0) {} }
         if (p[0].revents & (POLLIN | POLLHUP | POLLERR)) {
             ssize_t n = read(cfd, buf, sizeof buf);
             if (n <= 0) { BBLog("client disconnected"); break; }
             if (gVerbose) HexDump("<<", buf, (size_t)n);
-            if (!WriteAll(rfd, buf, (size_t)n)) { BBLog("rfcomm write failed: %s", strerror(errno)); break; }
+            __block BOOL ok = YES;
+            if (!aligned) {
+                ok = WriteAll(rfd, buf, (size_t)n);
+            } else {
+                [clientFrames feed:buf length:(size_t)n each:^(const uint8_t *seg, size_t len, BOOL isFrame, BOOL crcOK) {
+                    if (isFrame && crcOK) ObserveFrame(seg, len, NO);
+                    if (ok) ok = WriteAll(rfd, seg, len);
+                }];
+            }
+            if (!ok) { BBLog("rfcomm write failed: %s", strerror(errno)); break; }
         }
         if (p[1].revents & (POLLIN | POLLHUP | POLLERR)) {
             ssize_t n = read(rfd, buf, sizeof buf);
             if (n <= 0) { BBLog("rfcomm socket closed"); break; }
             if (gVerbose) HexDump(">>", buf, (size_t)n);
             if (!WriteAll(cfd, buf, (size_t)n)) { BBLog("client write failed"); break; }
+            [budsFrames feed:buf length:(size_t)n each:^(const uint8_t *seg, size_t len, BOOL isFrame, BOOL crcOK) {
+                if (!isFrame || !crcOK) return;
+                ObserveFrame(seg, len, YES);
+                if (!aligned) {
+                    aligned = YES;
+                    pthread_mutex_lock(&gStateLock);
+                    if (gSessionActive) gSessionAligned = YES;
+                    pthread_mutex_unlock(&gStateLock);
+                }
+            }];
+        }
+        if (aligned && !FlushQueued(rfd, cfd, clientFrames.isEmpty, budsFrames.isEmpty)) {
+            BBLog("rfcomm write failed: %s", strerror(errno));
+            break;
         }
     }
 }
@@ -643,10 +794,15 @@ static int CmdServe(NSString *macArg, int channel, NSString *uuid, int port) {
 //   LIST                       -> "DEVICE <MAC>\t<connected 0|1>\t<name>\n" per paired classic device, "END\n", close
 //   CONNECT [MAC] [channel]    -> "OK <channel>\n" then raw bytes in both directions until either side closes,
 //                                 or "ERR <reason>\n" and close. Without MAC: the default device.
+//   NOISE                      -> "MODE <off|anc|ambient|adaptive>\n" (the current noise control mode), or "ERR <reason>\n"
+//   NOISE <mode>               -> sets it: "OK <mode>\n" or "ERR <reason>\n". mode: off, anc, ambient, adaptive (or 0-3)
 //
 // Only one CONNECT session can be active at a time; others get "ERR busy". LIST and PING always work.
+// NOISE works either way: during a CONNECT session its frame is slipped into that session (and the client gets a
+// NOISE_CONTROLS_UPDATE frame, as if the buds had sent it); otherwise it opens a short session of its own.
 
 static volatile int gBusy = 0;
+static volatile int gShortSession = 0;   // gBusy is held by a short NOISE session
 static NSString *gUUIDOverride;
 
 static BOOL ReadLine(int fd, char *out, size_t cap, int timeoutMs) {
@@ -680,14 +836,32 @@ static void HandleList(int cfd) {
     WriteStr(cfd, out);
 }
 
+static void SetSessionActive(BOOL active) {
+    pthread_mutex_lock(&gStateLock);
+    gSessionActive = active; gSessionAligned = NO;
+    [gToBuds removeAllObjects]; [gToClient removeAllObjects];
+    pthread_mutex_unlock(&gStateLock);
+}
+
 static void HandleConnect(int cfd, NSString *macArg, int channel) {
-    if (!__sync_bool_compare_and_swap(&gBusy, 0, 1)) { WriteStr(cfd, @"ERR busy\n"); return; }
+    BOOL got = __sync_bool_compare_and_swap(&gBusy, 0, 1);
+    // A short NOISE session (Control Center) is over in a few seconds: wait for it instead of failing.
+    // The first second is waited out regardless, in case one is just starting.
+    for (int i = 0; !got && i < 300 && (i < 10 || gShortSession); i++) {
+        usleep(100 * 1000);
+        got = __sync_bool_compare_and_swap(&gBusy, 0, 1);
+    }
+    if (!got) { WriteStr(cfd, @"ERR busy\n"); return; }
     BBSession *s = [BBSession new];
     NSString *mac = nil;
     if (StartManager(s)) mac = ResolveAddress(s, macArg);
     BBLog("client requests %s", mac ? mac.UTF8String : "the default device");
     if (mac && FindPeer(s, mac) && ConnectPeer(s) && OpenBudsChannel(s, mac, channel, gUUIDOverride)) {
-        if (WriteStr(cfd, [NSString stringWithFormat:@"OK %u\n", s.channelID])) Pump(s, cfd);
+        if (WriteStr(cfd, [NSString stringWithFormat:@"OK %u\n", s.channelID])) {
+            SetSessionActive(YES);
+            Pump(s, cfd);
+            SetSessionActive(NO);
+        }
         CloseChannel(s);
         BBLog("session for %s ended", mac.UTF8String);
     } else {
@@ -695,6 +869,119 @@ static void HandleConnect(int cfd, NSString *macArg, int channel) {
         WriteStr(cfd, [NSString stringWithFormat:@"ERR %@\n", s.error ?: @"unknown error"]);
     }
     __sync_lock_release(&gBusy);
+}
+
+// Read frames from a short session's channel for up to `seconds`, or until `done` returns YES.
+static void ReadFrames(BBSession *s, BBFramer *frames, double seconds, BOOL *seenStatus, BOOL (^done)(void)) {
+    int fd = s.channel.socketFD;
+    double end = Now() + seconds;
+    uint8_t buf[2048];
+    while (Now() < end && !s.channelClosed && !(done && done())) {
+        struct pollfd p = {fd, POLLIN, 0};
+        int r = poll(&p, 1, 100);
+        if (r < 0 && errno != EINTR) break;
+        if (r <= 0) continue;
+        ssize_t n = read(fd, buf, sizeof buf);
+        if (n <= 0) break;
+        if (gVerbose) HexDump(">>", buf, (size_t)n);
+        [frames feed:buf length:(size_t)n each:^(const uint8_t *seg, size_t len, BOOL isFrame, BOOL crcOK) {
+            if (isFrame && crcOK && ObserveFrame(seg, len, YES) == MSG_EXTENDED_STATUS_UPDATED && seenStatus)
+                *seenStatus = YES;
+        }];
+    }
+}
+
+// No app session: open the channel just long enough to read the status (it carries the noise mode) and, when
+// setting, send the mode. Called with gBusy held.
+static BOOL ShortNoiseSession(int setMode, NSString **error) {
+    BBSession *s = [BBSession new];
+    NSString *mac = nil;
+    if (!(StartManager(s) && (mac = ResolveAddress(s, nil)) && FindPeer(s, mac) && ConnectPeer(s) &&
+          OpenBudsChannel(s, mac, 0, gUUIDOverride))) {
+        *error = s.error ?: @"unknown error";
+        return NO;
+    }
+    BBFramer *frames = [BBFramer new];
+    __block BOOL seenStatus = NO;
+    // The buds send EXTENDED_STATUS_UPDATED right after the channel opens; they take commands after that
+    ReadFrames(s, frames, 4, &seenStatus, ^BOOL { return seenStatus; });
+    BOOL ok = YES;
+    if (setMode >= 0) {
+        if (!seenStatus) BBLog("noise: no status from the buds, sending the mode anyway");
+        uint8_t info[3] = {1, 1, 34};  // MANAGER_INFO, as the app sends it: Samsung client, Android SDK 34
+        uint8_t mode = (uint8_t)setMode;
+        NSMutableData *out = [BuildFrame(MSG_MANAGER_INFO, info, sizeof info) mutableCopy];
+        [out appendData:BuildFrame(MSG_NOISE_CONTROLS, &mode, 1)];
+        if (gVerbose) HexDump("<<", out.bytes, out.length);
+        ok = WriteAll(s.channel.socketFD, out.bytes, out.length);
+        if (ok) {
+            SetNoiseMode(setMode);
+            ReadFrames(s, frames, 0.6, NULL, nil);  // let bluetoothd send it before the channel closes
+        } else {
+            *error = @"write failed";
+        }
+    } else if (!seenStatus) {
+        *error = @"no status from the buds";
+        ok = NO;
+    }
+    CloseChannel(s);
+    return ok;
+}
+
+static void HandleNoise(int cfd, NSString *arg) {
+    int want = arg ? NoiseModeFromName(arg) : -1;
+    if (arg && want < 0) { WriteStr(cfd, @"ERR bad mode (use off, anc, ambient or adaptive)\n"); return; }
+    NSString *verb = want >= 0 ? @"OK" : @"MODE";
+    double deadline = Now() + 8;
+    for (;;) {
+        pthread_mutex_lock(&gStateLock);
+        if (gSessionActive && gSessionAligned) {
+            // The app is connected: slip the frame into its session
+            if (want >= 0) {
+                uint8_t mode = (uint8_t)want;
+                if (!gToBuds) gToBuds = [NSMutableArray array];
+                if (!gToClient) gToClient = [NSMutableArray array];
+                [gToBuds addObject:BuildFrame(MSG_NOISE_CONTROLS, &mode, 1)];
+                [gToClient addObject:BuildFrame(MSG_NOISE_CONTROLS_UPDATE, &mode, 1)];
+                gNoiseMode = want; gNoiseModeTime = Now();
+                if (gWake[1] >= 0) write(gWake[1], "n", 1);
+            }
+            int mode = gNoiseMode;
+            pthread_mutex_unlock(&gStateLock);
+            if (want >= 0) BBLog("noise: %s (into the app's session)", NoiseModeName(want).UTF8String);
+            WriteStr(cfd, mode >= 0 ? [NSString stringWithFormat:@"%@ %@\n", verb, NoiseModeName(mode)]
+                                    : @"ERR mode not known yet\n");
+            return;
+        }
+        // Asking only, and the mode was learned recently: answer from memory
+        if (want < 0 && gNoiseMode >= 0 && Now() - gNoiseModeTime < 30) {
+            int mode = gNoiseMode;
+            pthread_mutex_unlock(&gStateLock);
+            WriteStr(cfd, [NSString stringWithFormat:@"MODE %@\n", NoiseModeName(mode)]);
+            return;
+        }
+        BOOL sessionStarting = gSessionActive;
+        pthread_mutex_unlock(&gStateLock);
+        if (__sync_bool_compare_and_swap(&gBusy, 0, 1)) break;
+        // A CONNECT is being set up, or its session hasn't seen a buds frame yet: wait for it a little
+        if (Now() > deadline) {
+            WriteStr(cfd, sessionStarting ? @"ERR not supported for this device\n" : @"ERR busy\n");
+            return;
+        }
+        usleep(100 * 1000);
+    }
+
+    gShortSession = 1;
+    NSString *err = nil;
+    BBLog(want >= 0 ? "noise: %s (short session)" : "noise: reading the mode (short session)", NoiseModeName(want).UTF8String);
+    BOOL ok = ShortNoiseSession(want, &err);
+    gShortSession = 0;
+    __sync_lock_release(&gBusy);
+    pthread_mutex_lock(&gStateLock);
+    int mode = gNoiseMode;
+    pthread_mutex_unlock(&gStateLock);
+    if (!ok) { BBLog("noise failed: %s", err.UTF8String ?: "?"); WriteStr(cfd, [NSString stringWithFormat:@"ERR %@\n", err]); }
+    else WriteStr(cfd, [NSString stringWithFormat:@"%@ %@\n", verb, NoiseModeName(want >= 0 ? want : mode)]);
 }
 
 static void *ClientThread(void *arg) {
@@ -718,6 +1005,7 @@ static void *ClientThread(void *arg) {
                 if (ch < 0 || ch > 30) WriteStr(cfd, @"ERR bad channel\n");
                 else HandleConnect(cfd, mac, ch);
             }
+            else if ([cmd isEqualToString:@"NOISE"]) HandleNoise(cfd, tok.count > 1 ? tok[1] : nil);
             else WriteStr(cfd, @"ERR unknown command\n");
         }
     }
@@ -729,6 +1017,12 @@ static int CmdDaemon(int port) {
     int lfd = -1;
     // At boot the port can briefly still be held by a previous instance; keep trying instead of exiting.
     while ((lfd = ListenTCP(port)) < 0) { if (gStop) return 0; sleep(5); }
+    if (pipe(gWake) == 0) {
+        fcntl(gWake[0], F_SETFL, O_NONBLOCK);
+        fcntl(gWake[1], F_SETFL, O_NONBLOCK);
+    } else {
+        gWake[0] = gWake[1] = -1;
+    }
     BBLog("budsrfcomm " BB_VERSION " daemon listening on 127.0.0.1:%d", port);
     while (!gStop) {
         struct pollfd pl = {lfd, POLLIN, 0};
@@ -779,6 +1073,25 @@ static int CmdConfig(NSString *macArg, int channel, int port) {
     return 0;
 }
 
+// Ask the running daemon (noise control goes through it, so it also works while the app is connected).
+static int CmdNoise(NSString *mode, int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in sa = {.sin_len = sizeof sa, .sin_family = AF_INET, .sin_port = htons((uint16_t)port)};
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof sa)) {
+        BBLog("cannot reach the budsrfcomm daemon on 127.0.0.1:%d: %s", port, strerror(errno));
+        close(fd);
+        return 2;
+    }
+    WriteStr(fd, mode ? [NSString stringWithFormat:@"NOISE %@\n", mode] : @"NOISE\n");
+    char line[256];
+    BOOL got = ReadLine(fd, line, sizeof line, 60000);
+    close(fd);
+    if (!got) { BBLog("no answer from the daemon"); return 2; }
+    printf("%s\n", line);
+    return strncmp(line, "ERR", 3) ? 0 : 1;
+}
+
 static int CmdForget(void) {
     if (unlink(BB_CONFIG_PATH) && errno != ENOENT) { BBLog("cannot remove %s: %s", BB_CONFIG_PATH, strerror(errno)); return 2; }
     printf("forgot the remembered devices, channels and port\n");
@@ -794,7 +1107,8 @@ static void Usage(void) {
         "  budsrfcomm [-v] serve [MAC] [-c channel] [-u uuid] [-p port]\n"
         "  budsrfcomm [-v] daemon [-u uuid] [-p port]\n"
         "  budsrfcomm config [MAC] [-c channel] [-p port]\n"
-        "  budsrfcomm forget\n\n"
+        "  budsrfcomm forget\n"
+        "  budsrfcomm noise [off|anc|ambient|adaptive]\n\n"
         "  MAC defaults to the remembered device, else the paired device named \"...Buds...\".\n"
         "  Channels that work are remembered per device in " BB_CONFIG_PATH ".\n"
         "  The package runs `budsrfcomm daemon` in the background (LaunchDaemon com.galaxybudsclient.budsrfcomm).\n\n"
@@ -804,7 +1118,7 @@ static void Usage(void) {
         "  -t  seconds to listen (probe, default 15)\n"
         "  -p  TCP port for serve/daemon/config (default: remembered, else 8762)\n"
         "  -v  verbose (hex dumps of all traffic)\n\n"
-        "daemon protocol: send \"PING\", \"LIST\" or \"CONNECT [MAC] [channel]\" + newline; see README.\n");
+        "daemon protocol: send \"PING\", \"LIST\", \"CONNECT [MAC] [channel]\" or \"NOISE [mode]\" + newline; see README.\n");
 }
 
 static void OnStopSignal(int sig) { (void)sig; gStop = 1; }
@@ -844,6 +1158,7 @@ int main(int argc, char **argv) {
         if ([cmd isEqualToString:@"config"]) return CmdConfig(mac, channel, port);
         if ([cmd isEqualToString:@"forget"]) return CmdForget();
         int listenPort = port ?: ConfigInt(LoadConfig(), @"Port") ?: BB_DEFAULT_PORT;
+        if ([cmd isEqualToString:@"noise"]) return CmdNoise(mac, listenPort);
         if ([cmd isEqualToString:@"list"]) return CmdList();
         if ([cmd isEqualToString:@"daemon"]) { gUUIDOverride = uuid; return CmdDaemon(listenPort); }
         if ([cmd isEqualToString:@"probe"]) return CmdProbe(mac, channel, uuid, send, seconds);

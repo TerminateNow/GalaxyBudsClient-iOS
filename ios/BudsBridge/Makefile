@@ -1,8 +1,9 @@
 # Builds budsrfcomm for rootless jailbreaks (Dopamine) on Linux / WSL2.
 # Needs: clang + lld (>= 15), ldid, dpkg-deb, and an iOS SDK (theos/sdks iPhoneOS15.6.sdk).
 #
-#   make SDK=/path/to/iPhoneOS15.6.sdk          -> build/budsrfcomm
+#   make SDK=/path/to/iPhoneOS15.6.sdk          -> build/budsrfcomm, build/BudsBridge.dylib, build/GalaxyBudsNoise
 #   make package SDK=...                        -> build/com.galaxybudsclient.budsrfcomm_<ver>_iphoneos-arm64.deb
+#   make package-cc SDK=...                     -> build/com.galaxybudsclient.noisecc_<ver>_iphoneos-arm64.deb (Control Center module)
 
 SDK      ?= $(THEOS)/sdks/iPhoneOS15.6.sdk
 CLANG    ?= clang
@@ -19,7 +20,11 @@ LDFLAGS  := -target arm64-apple-ios15.0 -isysroot $(SDK) -fuse-ld=lld --ld-path=
 TWEAKDIR := /var/jb/Library/MobileSubstrate/DynamicLibraries
 DAEMONDIR := /var/jb/Library/LaunchDaemons
 
-all: build/budsrfcomm build/BudsBridge.dylib
+CC_VERSION := $(shell sed -n 's/^Version: //p' ccmodule/control)
+CC_PKG     := com.galaxybudsclient.noisecc
+CC_BUNDLE  := /var/jb/Library/ControlCenter/Bundles/GalaxyBudsNoise.bundle
+
+all: build/budsrfcomm build/BudsBridge.dylib build/GalaxyBudsNoise
 
 build/budsrfcomm: src/budsrfcomm.m src/PrivateCoreBluetooth.h entitlements.plist
 	@mkdir -p build
@@ -41,7 +46,22 @@ package: build/budsrfcomm build/BudsBridge.dylib
 	chmod 0644 build/pkg$(DAEMONDIR)/com.galaxybudsclient.budsrfcomm.plist
 	dpkg-deb -Zgzip --root-owner-group -b build/pkg build/$(PKG)_$(VERSION)_iphoneos-arm64.deb
 
+# Control Center module (CCSupport bundle loaded into SpringBoard)
+build/GalaxyBudsNoise: ccmodule/NoiseControlModule.m
+	@mkdir -p build
+	$(CLANG) $(CFLAGS) -target arm64-apple-ios15.0 -isysroot $(SDK) -fuse-ld=lld --ld-path=$(LD64) -bundle \
+		-F$(SDK)/System/Library/PrivateFrameworks -framework Foundation -framework UIKit -framework ControlCenterUIKit \
+		-o $@ ccmodule/NoiseControlModule.m
+	$(LDID) -S $@
+
+package-cc: build/GalaxyBudsNoise
+	rm -rf build/pkgcc && mkdir -p build/pkgcc/DEBIAN build/pkgcc$(CC_BUNDLE)
+	cp ccmodule/control build/pkgcc/DEBIAN/control
+	cp build/GalaxyBudsNoise ccmodule/Info.plist ccmodule/SettingsIcon@2x.png ccmodule/SettingsIcon@3x.png build/pkgcc$(CC_BUNDLE)/
+	chmod 0644 build/pkgcc$(CC_BUNDLE)/Info.plist build/pkgcc$(CC_BUNDLE)/*.png
+	dpkg-deb -Zgzip --root-owner-group -b build/pkgcc build/$(CC_PKG)_$(CC_VERSION)_iphoneos-arm64.deb
+
 clean:
 	rm -rf build
 
-.PHONY: all package clean
+.PHONY: all package package-cc clean

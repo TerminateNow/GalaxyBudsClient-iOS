@@ -19,14 +19,17 @@ The package has two parts:
 Status: **working end to end** on an iPhone 7 running 15.8.8 with Galaxy Buds3 Pro (firmware R630XXU0AZG2).
 The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STATUS_UPDATED` right after the channel opens, and every frame's CRC is valid.
 The 0.3.1 background service (`PING`, `LIST`, `CONNECT` with the saved channel) is verified on the same phone.
+The 0.4.0 `NOISE` command is verified there too, both on its own and slipped into a running `CONNECT` session.
+
+A second, optional package adds a **Control Center module** for noise control (see [Control Center module](#control-center-module)).
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.3.1_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.4.0_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.3.1_iphoneos-arm64.deb
+   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.4.0_iphoneos-arm64.deb
    ```
 
    The install restarts `bluetoothd` so it loads the tweak (Bluetooth drops for a few seconds, then reconnects),
@@ -72,9 +75,18 @@ A client connects to `127.0.0.1:8762` and sends one command line ending in `\n`:
 | `PING` | `PONG budsrfcomm <version>`, then the connection closes. |
 | `LIST` | One `DEVICE <MAC>\t<connected 0/1>\t<name>` line per paired classic device, then `END`, then the connection closes. |
 | `CONNECT [MAC] [channel]` | `OK <channel>`, followed by raw RFCOMM bytes in both directions until either side closes. On failure: `ERR <reason>`, then the connection closes. With no MAC, the default device is used. |
+| `NOISE` | `MODE <off\|anc\|ambient\|adaptive>`: the current noise control mode. On failure: `ERR <reason>`. (0.4.0) |
+| `NOISE <mode>` | Sets the mode (`off`, `anc`, `ambient`, `adaptive`, or `0`–`3`) and answers `OK <mode>`, or `ERR <reason>`. (0.4.0) |
 
-- Only one `CONNECT` can be active at a time. A second one gets `ERR busy`. `PING` and `LIST` always work.
+- Only one `CONNECT` can be active at a time. A second one gets `ERR busy`. `PING`, `LIST` and `NOISE` always work.
 - Closing the TCP connection closes the RFCOMM channel. If the Buds disconnect, the service closes the TCP connection.
+- `NOISE` works whether or not a `CONNECT` session is open:
+  - **With a session (the app is connected):** the service slips a `NOISE_CONTROLS` frame (`0x78`) into that session between two of the app's frames. It also sends the app a `NOISE_CONTROLS_UPDATE` frame (`0x77`), as if the Buds had sent it, so the app's screen follows.
+    This needs the Buds' `FD … DD` framing, so it isn't available for the 2019 Galaxy Buds.
+  - **Without one:** the service opens a short session of its own. It reads `EXTENDED_STATUS_UPDATED` (the noise mode is payload byte 12), sends `MANAGER_INFO` and the mode if asked, and closes the channel. This takes about a second.
+    A `CONNECT` that arrives meanwhile waits for it instead of getting `ERR busy`.
+  - The service remembers the last mode it saw in either direction. A `NOISE` query without a session is answered from memory for 30 seconds.
+- The same is available from the command line: `budsrfcomm noise` and `budsrfcomm noise anc`. The command line talks to the service, which must be running.
 
 | Task | Command |
 |---|---|
@@ -123,6 +135,30 @@ The first `CONNECT` to a new device can take 20 seconds or more while it scans c
   ```bash
   sudo apt remove com.galaxybudsclient.budsrfcomm
   ```
+
+## Control Center module
+
+The package `com.galaxybudsclient.noisecc` adds a **Galaxy Buds Noise Control** tile to Control Center. It needs
+[CCSupport](https://github.com/opa334/CCSupport) and this package (0.4.0 or newer), and works whether or not the app is open.
+
+- **Tap** switches between noise cancelling and ambient sound.
+- **Long press** opens a menu with Off, Noise Cancelling, Ambient Sound and Adaptive. The current mode has a checkmark.
+- The tile is highlighted while noise cancelling, ambient sound or adaptive is on. Its icon shows the mode.
+- Each time Control Center opens, the tile asks the service for the current mode. Errors (service not running,
+  Buds not connected) show as the menu's subtitle.
+
+Install it after the bridge, then respring and add it in **Settings → Control Center**:
+
+```bash
+sudo dpkg -i com.galaxybudsclient.noisecc_1.0.0_iphoneos-arm64.deb
+```
+
+```bash
+sbreload
+```
+
+The module is `ccmodule/NoiseControlModule.m`. It subclasses ControlCenterUIKit's `CCUIMenuModuleViewController`; the private
+declarations at the top of the file were checked against the iOS 15.8 runtime. It speaks the `NOISE` command to 127.0.0.1, using the port from the settings file.
 
 ## Test (over SSH on the phone)
 
@@ -177,6 +213,8 @@ The MAC address is optional in every command. Without it, the saved device or th
 | `connection failed` / timeout | The Buds are in the case, or connected to another device. |
 | `cannot listen on 127.0.0.1:8762` | The service already owns that port. Use `-p` with another port, or stop the service. |
 | `ERR busy` | Another client (the app, or a `CONNECT` you left running) already has the Buds open. |
+| Control Center tile says "Update BudsBridge to 0.4.0 or newer" | The service is older than 0.4.0 and doesn't know `NOISE`. |
+| `ERR not supported for this device` from `NOISE` | A session is open, but the Buds don't use `FD … DD` framing (2019 Galaxy Buds), or haven't sent a frame yet. |
 
 ## Build (Linux or WSL2)
 
@@ -186,4 +224,14 @@ Needs clang and lld (version 15 or newer), `ldid` (ProcursusTeam), `dpkg-deb`, a
 make package SDK=/path/to/iPhoneOS15.6.sdk
 ```
 
-The output goes to `build/`. The prebuilt `.deb` in `dist/` was built this way.
+The Control Center module is a separate package:
+
+```bash
+make package-cc SDK=/path/to/iPhoneOS15.6.sdk
+```
+
+The output goes to `build/`. The prebuilt `.deb` files in `dist/` were built this way.
+If your lld has no `ld64.lld` name (Ubuntu's `lld` package, for example), make a symlink called `ld64.lld` to `lld` and pass it as `LD64=/path/to/ld64.lld`.
+
+To try a build on the phone before installing it, copy the binary into the jailbreak's folder (for example `/var/jb/var/mobile/`).
+Dopamine kills unsigned binaries run from `/tmp` (`Killed: 9`).

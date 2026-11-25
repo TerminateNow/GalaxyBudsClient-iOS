@@ -117,6 +117,12 @@ public class App : Application
         // accessibility-tree failure — it is benign and affects an assistive-technology query, not
         // the UI itself — while letting every other exception crash and report as before.
         Dispatcher.UIThread.UnhandledException += OnDispatcherUnhandledException;
+        // The cache must subscribe to SppMessageReceiver before anything that reads it from its own
+        // handler for the same message. Handlers run in subscription order: if OnExtendedStatusUpdate
+        // (below) ran first, the connection popup it creates would read a cache that was cleared on the
+        // last disconnect and show no battery levels, because the BaseUpdate it would have caught has
+        // already fired for that message.
+        DeviceMessageCache.Init();
         /* Must subscribe before the initial connection attempt to catch its Connected event */
         MultipointPatcher.Init();
 
@@ -172,8 +178,6 @@ public class App : Application
         // ExtendedStatusUpdate subscribed earlier (before MainWindow) — see comment there
         SppMessageReceiver.Instance.NoiseControlUpdateResponse += OnNoiseControlUpdate;
 
-        DeviceMessageCache.Init();
-        
         if (Loc.IsTranslatorModeEnabled)
         {
             Dialogs.ShowTranslatorTools();

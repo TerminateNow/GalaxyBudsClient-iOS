@@ -221,3 +221,9 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
   `EXTENDED_STATUS_UPDATED`; left/right at 1/2 and case at 6 in `STATUS_UPDATED`. Checked against the app's decoder and its
   recorded messages for Buds Live, Pro, 2, 2 Pro and FE; Buds3 Pro uses the same branch of the decoder. The Buds+ keeps its
   colors one byte later.
+
+- **Opening the app** (read from the device's runtime, 2026-11-26): `-[SpringBoard launchApplicationWithIdentifier:suspended:]`
+  exists. On the lock screen, `-[SBLockScreenManager unlockWithRequest:completion:]` takes an `SBLockScreenUnlockRequest`
+  (`setName:`, `setSource:`, `setIntent:`, `setWantsBiometricPresentation:`, `setDestinationApplication:`,
+  `setForceAlertAuthenticationUI:`, `setProcess:`, `setConfirmedNotInPocket:`). The popup uses source 17 and intent 3, the
+  values other tweaks use to unlock and open an app; not yet confirmed. `SBApplicationController` gives the `SBApplication`.

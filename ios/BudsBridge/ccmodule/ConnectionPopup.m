@@ -1,10 +1,13 @@
 // GalaxyBudsPopup: the connection popup, system-wide. A small tweak loaded into SpringBoard only (package
 // com.galaxybudsclient.noisecc, next to the Control Center module). When Galaxy Buds connect, it asks the budsrfcomm
 // daemon for the battery levels (BATTERY, budsrfcomm >= 0.5.0) and slides a card down over whatever is on screen,
-// lock screen included. The card hides after a few seconds, or on a tap or an upward swipe.
+// lock screen included. The card hides after a few seconds, or when swiped up. A tap opens the app (after Touch ID or
+// the passcode on the lock screen). Pressing and holding keeps the card up until released; dragging it down while
+// holding and releasing opens the app too.
 //
 // It hooks nothing: it listens for BluetoothManager's connection notifications, which SpringBoard already receives
-// for its status bar, and owns one window of its own while the card shows.
+// for its status bar, and owns one window of its own while the card shows (on the locked lock screen it adds the card
+// to the cover sheet's window instead).
 //
 // Settings, in the budsrfcomm settings file (budsrfcomm config, or edit the plist):
 //   Popup       NO turns the popup off (default YES)
@@ -249,10 +252,78 @@ static void HideCard(void) {
     @catch (NSException *e) { GB_LOG(@"hiding the card failed: %@", e); }
 }
 
+@interface NSObject (GBSpringBoard)
++ (instancetype)sharedInstance;
+- (BOOL)launchApplicationWithIdentifier:(NSString *)bundleID suspended:(BOOL)suspended;   // SpringBoard
+- (id)applicationWithBundleIdentifier:(NSString *)bundleID;                                // SBApplicationController
+- (void)unlockWithRequest:(id)request completion:(void (^)(BOOL success))completion;       // SBLockScreenManager
+- (void)setName:(NSString *)name;                                                          // SBLockScreenUnlockRequest
+- (void)setSource:(int)source;
+- (void)setIntent:(int)intent;
+- (void)setWantsBiometricPresentation:(BOOL)wants;
+- (void)setDestinationApplication:(id)app;
+@end
+
+static BOOL IsLocked(void);
+
+static void LaunchApp(void) {
+    id sb = UIApplication.sharedApplication;
+    if (![sb respondsToSelector:@selector(launchApplicationWithIdentifier:suspended:)]) { GB_LOG(@"can't launch apps"); return; }
+    GB_LOG(@"opening the app");
+    [sb launchApplicationWithIdentifier:GB_APP_BUNDLE_ID suspended:NO];
+}
+
+// Open the GalaxyBudsClient app. On the lock screen, ask for Touch ID or the passcode first, as a notification does.
+static void OpenApp(void) {
+    @try {
+        if (!IsLocked()) { LaunchApp(); return; }
+        Class lsm = NSClassFromString(@"SBLockScreenManager");
+        Class requestClass = NSClassFromString(@"SBLockScreenUnlockRequest");
+        id manager = [lsm respondsToSelector:@selector(sharedInstance)] ? [lsm sharedInstance] : nil;
+        if (!requestClass || ![manager respondsToSelector:@selector(unlockWithRequest:completion:)]) {
+            GB_LOG(@"can't request an unlock on this build");
+            return;
+        }
+        id request = [requestClass new];
+        [request setName:@"GalaxyBudsPopup: open app"];
+        [request setSource:17];   // values other tweaks use to unlock and open an app
+        [request setIntent:3];
+        [request setWantsBiometricPresentation:YES];
+        Class appController = NSClassFromString(@"SBApplicationController");
+        id controller = [appController respondsToSelector:@selector(sharedInstance)] ? [appController sharedInstance] : nil;
+        id app = [controller respondsToSelector:@selector(applicationWithBundleIdentifier:)]
+                 ? [controller applicationWithBundleIdentifier:GB_APP_BUNDLE_ID] : nil;
+        if (app) [request setDestinationApplication:app];
+        GB_LOG(@"requesting an unlock to open the app");
+        [manager unlockWithRequest:request completion:^(BOOL success) {
+            GB_LOG(@"unlock %@", success ? @"succeeded" : @"cancelled or failed");
+            if (success) dispatch_async(dispatch_get_main_queue(), ^{ LaunchApp(); });
+        }];
+    } @catch (NSException *e) { GB_LOG(@"opening the app failed: %@", e); }
+}
+
+static const CGFloat kOpenDragDistance = 50;     // drag down this far while holding to open the app on release
+static const NSTimeInterval kAfterHoldSeconds = 2;
+static BOOL gHeld;
+static NSUInteger gHoldToken;                     // changes with every hold, so older hide timers don't fire
+static CGPoint gHoldStart;
+static BOOL gPastOpenThreshold;
+
+static void ScheduleHide(UIView *card, NSTimeInterval seconds) {
+    NSUInteger token = gHoldToken;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (card == gCard && !gHeld && token == gHoldToken) HideCard();
+    });
+}
+
 @interface GBCardGestures : NSObject
 @end
 @implementation GBCardGestures
-+ (void)tapped:(UITapGestureRecognizer *)g { HideCard(); }
++ (void)tapped:(UITapGestureRecognizer *)g {
+    HideCard();
+    OpenApp();
+}
+// Quick swipe: up dismisses, anything else springs back
 + (void)panned:(UIPanGestureRecognizer *)g {
     UIView *card = g.view;
     CGFloat dy = [g translationInView:card.superview].y;
@@ -261,6 +332,51 @@ static void HideCard(void) {
     } else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
         if (dy < -30 || [g velocityInView:card.superview].y < -300) HideCard();
         else [UIView animateWithDuration:0.25 animations:^{ card.transform = CGAffineTransformIdentity; }];
+    }
+}
+// Press and hold: the card stays until released. Dragging down past kOpenDragDistance opens the app on release.
++ (void)held:(UILongPressGestureRecognizer *)g {
+    UIView *card = g.view;
+    CGPoint p = [g locationInView:card.superview];
+    switch (g.state) {
+        case UIGestureRecognizerStateBegan: {
+            gHeld = YES;
+            gHoldToken++;
+            gHoldStart = p;
+            gPastOpenThreshold = NO;
+            [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+            [UIView animateWithDuration:0.15 animations:^{ card.transform = CGAffineTransformMakeScale(0.97, 0.97); }];
+            break;
+        }
+        case UIGestureRecognizerStateChanged: {
+            CGFloat dy = p.y - gHoldStart.y;
+            CGFloat shown = dy < 0 ? dy : MIN(dy * 0.6, kOpenDragDistance * 1.6);
+            card.transform = CGAffineTransformScale(CGAffineTransformMakeTranslation(0, shown), 0.97, 0.97);
+            BOOL past = dy > kOpenDragDistance;
+            if (past != gPastOpenThreshold) {
+                gPastOpenThreshold = past;
+                [[UISelectionFeedbackGenerator new] selectionChanged];
+            }
+            break;
+        }
+        case UIGestureRecognizerStateEnded:
+        case UIGestureRecognizerStateCancelled: {
+            gHeld = NO;
+            gHoldToken++;
+            CGFloat dy = p.y - gHoldStart.y;
+            if (g.state == UIGestureRecognizerStateEnded && dy > kOpenDragDistance) {
+                HideCard();
+                OpenApp();
+            } else if (dy < -30) {
+                HideCard();
+            } else {
+                [UIView animateWithDuration:0.25 animations:^{ card.transform = CGAffineTransformIdentity; }];
+                ScheduleHide(card, kAfterHoldSeconds);
+            }
+            break;
+        }
+        default:
+            break;
     }
 }
 @end
@@ -417,8 +533,15 @@ static void ShowCardUnsafe(NSString *name, GBBattery b) {
     fill.priority = UILayoutPriorityDefaultHigh;
     fill.active = YES;
 
-    [card addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:GBCardGestures.class action:@selector(tapped:)]];
+    UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:GBCardGestures.class action:@selector(held:)];
+    hold.minimumPressDuration = 0.35;
+    hold.allowableMovement = 12;  // moving sooner than that is a swipe
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:GBCardGestures.class action:@selector(tapped:)];
+    [tap requireGestureRecognizerToFail:hold];
+    [card addGestureRecognizer:hold];
+    [card addGestureRecognizer:tap];
     [card addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:GBCardGestures.class action:@selector(panned:)]];
+    gHeld = NO;
     gCard = card;
 
     // Slide down from above the screen
@@ -429,9 +552,8 @@ static void ShowCardUnsafe(NSString *name, GBBattery b) {
         card.transform = CGAffineTransformIdentity;
     } completion:nil];
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kVisibleSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (generation == gGeneration && card == gCard) HideCard();
-    });
+    ScheduleHide(card, kVisibleSeconds);
+    (void)generation;
     GB_LOG(@"showing %@: left %d%%, right %d%%, case %d%%, color %d", name, b.left, b.right, b.caseLevel, b.color);
 }
 

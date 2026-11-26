@@ -174,7 +174,11 @@ declarations at the top of the file were checked against the iOS 15.8 runtime. I
 ### Connection popup
 
 When Galaxy Buds connect, a card slides down from the top of the screen with the Buds' name and the left, right and case
-battery levels, over any app, the home screen or the lock screen. It hides after 4 seconds, or when you tap it or swipe it up.
+battery levels, over any app, the home screen or the lock screen. It hides after 4 seconds, or when you swipe it up.
+
+- **Tap** opens the GalaxyBudsClient app. On the lock screen, Touch ID or the passcode is asked for first.
+- **Press and hold** keeps the card up until you let go; it hides 2 seconds after that.
+- **Hold and drag down**, then let go, opens the app too. Holding and letting go without dragging doesn't.
 Buds3 Pro show their own photos (Silver and White); other models show a generic earbud symbol.
 
 - It's `GalaxyBudsPopup.dylib`, a tweak loaded into SpringBoard only (`ccmodule/ConnectionPopup.m`). It hooks nothing: it listens

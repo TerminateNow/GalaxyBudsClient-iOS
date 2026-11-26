@@ -204,7 +204,11 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
   `initWithScreen:role:debugName:`, `initWithScreen:rootViewController:role:debugName:` and variants with `scene:` and
   `layoutStrategy:`. The card's window is now a runtime subclass of `SBSecureWindow` made with `initWithDebugName:`
   (and put in SpringBoard's scene if it has none); it falls back to the `UIWindow` subclass if that class is missing.
-  Whether that shows on the lock screen is being tested.
+  That window shows on the lock screen only after a Touch ID unlock, not while the phone is really locked, although it
+  reports `hidden 0`, alpha 1, is in the scene, and `SBWindowHidingManager dumpHidingState` says "Active hide range is: OFF"
+  (its `_additionalHiddenReasons` is nil too). The cover sheet window has an `SBFTraitsParticipant` (role CoverSheet); the
+  card's window has none. So while `-[SBLockScreenManager isUILocked]` is YES, the card is now added to the
+  `SBCoverSheetWindow`'s root view instead of its own window; that's being tested.
 - **Frontmost app.** `-[SpringBoard _accessibilityFrontMostApplication]` returns an `SBApplication` with `bundleIdentifier`.
   When it's `com.galaxybudsclient.ios`, the popup is left to the app.
 - **SF Symbols.** `battery.100/75/50/25/0` and `earbuds` are assumed to exist on iOS 15; missing ones fall back to

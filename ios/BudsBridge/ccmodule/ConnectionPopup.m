@@ -350,6 +350,22 @@ static Class SecureWindowClass(void) {
     return cls;
 }
 
+static BOOL IsLocked(void) {
+    Class lsm = NSClassFromString(@"SBLockScreenManager");
+    id manager = [lsm respondsToSelector:@selector(sharedInstance)] ? [lsm sharedInstance] : nil;
+    return [manager respondsToSelector:@selector(isUILocked)] && [manager isUILocked];
+}
+
+// While the phone is locked (not yet unlocked with Touch ID or the passcode) SpringBoard shows none of its other windows,
+// even an SBSecureWindow above the cover sheet that reports itself visible (iPhone 7, 15.8.8). So the card goes into the
+// cover sheet window itself then, on top of the lock screen's content.
+static UIView *LockScreenHost(UIWindowScene *scene) {
+    if (!IsLocked()) return nil;
+    for (UIWindow *w in scene.windows)
+        if (!w.hidden && [NSStringFromClass(w.class) isEqualToString:@"SBCoverSheetWindow"]) return w.rootViewController.view ?: w;
+    return nil;
+}
+
 static UIWindowScene *SpringBoardScene(void) {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
         if ([scene isKindOfClass:UIWindowScene.class]) return (UIWindowScene *)scene;
@@ -360,8 +376,10 @@ static void ShowCard(NSString *name, GBBattery b) {
     if (gCard) { [gCard removeFromSuperview]; gCard = nil; }
     NSUInteger generation = ++gGeneration;
 
-    if (!gWindow) {
-        UIWindowScene *scene = SpringBoardScene();
+    UIWindowScene *scene = SpringBoardScene();
+    UIView *root = LockScreenHost(scene);
+    if (root) GB_LOG(@"locked: showing the card in the lock screen's window");
+    if (!root && !gWindow) {
         Class secure = SecureWindowClass();
         SEL initDebug = NSSelectorFromString(@"initWithDebugName:");
         NSString *kind = @"SBSecureWindow";
@@ -382,9 +400,11 @@ static void ShowCard(NSString *name, GBBattery b) {
         if ([gWindow respondsToSelector:@selector(_setSecure:)]) [gWindow _setSecure:YES];  // also on the lock screen
         GB_LOG(@"window created (%@, %@, level %.1f)", kind, gWindow.windowScene ? @"in a scene" : @"without a scene", gWindow.windowLevel);
     }
-    if (ConfigBool(@"PopupDebug", NO)) LogWindows(gWindow.windowScene);
-    gWindow.hidden = NO;
-    UIView *root = gWindow.rootViewController.view;
+    if (!root) {
+        if (ConfigBool(@"PopupDebug", NO)) LogWindows(gWindow.windowScene);
+        gWindow.hidden = NO;
+        root = gWindow.rootViewController.view;
+    }
 
     // Card: blurred material with a shadow, like system banners
     UIView *card = [UIView new];
@@ -422,7 +442,7 @@ static void ShowCard(NSString *name, GBBattery b) {
     [material.contentView addSubview:content];
     [root addSubview:card];
 
-    CGFloat top = MAX(gWindow.windowScene.statusBarManager.statusBarFrame.size.height, root.safeAreaInsets.top);
+    CGFloat top = MAX(scene.statusBarManager.statusBarFrame.size.height, root.safeAreaInsets.top);
     if (top <= 0) top = 20;  // iPhone 7 status bar
     [NSLayoutConstraint activateConstraints:@[
         [material.leadingAnchor constraintEqualToAnchor:card.leadingAnchor],
@@ -466,6 +486,35 @@ static void ShowCard(NSString *name, GBBattery b) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             GB_LOG(@"1 s later: hidden %d alpha %.2f layer.hidden %d layer.opacity %.2f card alpha %.2f in scene %d",
                    w.hidden, w.alpha, w.layer.hidden, w.layer.opacity, card.alpha, [w.windowScene.windows containsObject:w]);
+            // What SpringBoard hides while locked
+            Class hm = NSClassFromString(@"SBWindowHidingManager");
+            id manager = [hm respondsToSelector:@selector(sharedInstance)] ? [hm sharedInstance] : nil;
+            for (NSString *sel in @[@"dumpHidingState", @"dumpKnownWindows"]) {
+                SEL s = NSSelectorFromString(sel);
+                if (![manager respondsToSelector:s]) continue;
+                id out = ((id (*)(id, SEL))objc_msgSend)(manager, s);
+                GB_LOG(@"%@: %@", sel, out);
+            }
+            // SBWindow state of the card window and of the cover sheet
+            UIWindow *cover = nil;
+            for (UIWindow *x in w.windowScene.windows)
+                if ([NSStringFromClass(x.class) isEqualToString:@"SBCoverSheetWindow"]) cover = x;
+            for (UIWindow *x in @[w, cover ?: w]) {
+                NSMutableArray *vals = [NSMutableArray array];
+                for (Class c = x.class; c && c != UIWindow.class; c = class_getSuperclass(c)) {
+                    unsigned n = 0;
+                    Ivar *ivars = class_copyIvarList(c, &n);
+                    for (unsigned i = 0; i < n; i++) {
+                        const char *type = ivar_getTypeEncoding(ivars[i]);
+                        NSString *name = @(ivar_getName(ivars[i]));
+                        if (type[0] == '@') [vals addObject:[NSString stringWithFormat:@"%@=%@", name, object_getIvar(x, ivars[i])]];
+                        else if (type[0] == 'B' || type[0] == 'c')
+                            [vals addObject:[NSString stringWithFormat:@"%@=%d", name, *(BOOL *)((uint8_t *)(__bridge void *)x + ivar_getOffset(ivars[i]))]];
+                    }
+                    free(ivars);
+                }
+                GB_LOG(@"%@ state: %@", NSStringFromClass(x.class), [vals componentsJoinedByString:@" "]);
+            }
         });
     }
 }

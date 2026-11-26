@@ -228,7 +228,7 @@ static UIWindow *gWindow;
 static UIView *gCard;
 static NSUInteger gGeneration;
 
-static void HideCard(void) {
+static void HideCardUnsafe(void) {
     if (!gCard) return;
     UIView *card = gCard;
     UIWindow *window = gWindow;
@@ -241,6 +241,12 @@ static void HideCard(void) {
         [card removeFromSuperview];
         if (generation == gGeneration && window == gWindow) { gWindow.hidden = YES; gWindow = nil; }
     }];
+}
+
+// An exception here would take SpringBoard down (and into safe mode): log it and carry on instead
+static void HideCard(void) {
+    @try { HideCardUnsafe(); }
+    @catch (NSException *e) { GB_LOG(@"hiding the card failed: %@", e); }
 }
 
 @interface GBCardGestures : NSObject
@@ -264,64 +270,10 @@ static void HideCard(void) {
 - (BOOL)isUILocked;
 @end
 
-// PopupDebug: what's on screen when the card shows, to place it above the lock screen
+// PopupDebug: what's on screen when the card shows in its own window
 static void LogWindows(UIWindowScene *scene) {
-    Class lsm = NSClassFromString(@"SBLockScreenManager");
-    id manager = [lsm respondsToSelector:@selector(sharedInstance)] ? [lsm sharedInstance] : nil;
-    GB_LOG(@"locked: %@", [manager respondsToSelector:@selector(isUILocked)] ? ([manager isUILocked] ? @"yes" : @"no") : @"unknown");
-    static BOOL listed;
-    if (!listed) {
-        listed = YES;
-        unsigned n = 0;
-        Method *methods = class_copyMethodList(UIWindow.class, &n);
-        NSMutableArray *names = [NSMutableArray array];
-        for (unsigned i = 0; i < n; i++) {
-            NSString *name = NSStringFromSelector(method_getName(methods[i]));
-            if ([name rangeOfString:@"ecure" options:NSCaseInsensitiveSearch].location != NSNotFound) [names addObject:name];
-        }
-        free(methods);
-        GB_LOG(@"UIWindow secure methods: %@", [names componentsJoinedByString:@" "]);
-        for (NSString *cls in @[@"SBSecureWindow", @"SBWindow", @"SBFWindow"]) {
-            Class c = NSClassFromString(cls);
-            if (!c) { GB_LOG(@"%@: no such class", cls); continue; }
-            methods = class_copyMethodList(c, &n);
-            NSMutableArray *inits = [NSMutableArray array];
-            for (unsigned i = 0; i < n; i++) {
-                NSString *name = NSStringFromSelector(method_getName(methods[i]));
-                if ([name hasPrefix:@"init"] || [name hasPrefix:@"_init"]) [inits addObject:name];
-            }
-            free(methods);
-            GB_LOG(@"%@ initializers: %@", cls, [inits componentsJoinedByString:@" "]);
-        }
-    }
-    GB_LOG(@"popup window in scene.windows: %@", [scene.windows containsObject:gWindow] ? @"yes" : @"no");
-    static BOOL listedHiding;
-    if (!listedHiding) {
-        listedHiding = YES;
-        for (NSString *cls in @[@"SBWindowHidingManager", @"SBSecureWindow", @"SBWindow"]) {
-            Class c = NSClassFromString(cls);
-            if (!c) { GB_LOG(@"%@: no such class", cls); continue; }
-            for (int meta = 0; meta < 2; meta++) {
-                unsigned n = 0;
-                Method *methods = class_copyMethodList(meta ? object_getClass(c) : c, &n);
-                NSMutableArray *names = [NSMutableArray array];
-                for (unsigned i = 0; i < n; i++) [names addObject:NSStringFromSelector(method_getName(methods[i]))];
-                free(methods);
-                GB_LOG(@"%@ %@ methods: %@", cls, meta ? @"class" : @"instance", [names componentsJoinedByString:@" "]);
-            }
-        }
-    }
-    for (UIWindow *w in scene.windows) {
-        if (w.hidden) continue;
-        NSMutableArray *chain = [NSMutableArray array];
-        for (Class c = w.class; c && c != UIWindow.class; c = class_getSuperclass(c)) [chain addObject:NSStringFromClass(c)];
-        NSMutableString *flags = [NSMutableString string];
-        for (NSString *sel in @[@"_isSecure", @"_shouldCreateContextAsSecure", @"_isSecureForRemoteViewService", @"_usesWindowServerHitTesting"]) {
-            SEL s = NSSelectorFromString(sel);
-            if ([w respondsToSelector:s]) [flags appendFormat:@" %@=%d", sel, ((BOOL (*)(id, SEL))objc_msgSend)(w, s)];
-        }
-        GB_LOG(@"window %@ level %.1f%@", [chain componentsJoinedByString:@":"], w.windowLevel, flags);
-    }
+    for (UIWindow *w in scene.windows)
+        if (!w.hidden) GB_LOG(@"window %@ level %.1f", NSStringFromClass(w.class), w.windowLevel);
 }
 
 // The lock screen only shows SpringBoard's SBSecureWindow subclasses (the cover sheet, wallpaper and recording indicator
@@ -372,7 +324,7 @@ static UIWindowScene *SpringBoardScene(void) {
     return nil;
 }
 
-static void ShowCard(NSString *name, GBBattery b) {
+static void ShowCardUnsafe(NSString *name, GBBattery b) {
     if (gCard) { [gCard removeFromSuperview]; gCard = nil; }
     NSUInteger generation = ++gGeneration;
 
@@ -481,42 +433,11 @@ static void ShowCard(NSString *name, GBBattery b) {
         if (generation == gGeneration && card == gCard) HideCard();
     });
     GB_LOG(@"showing %@: left %d%%, right %d%%, case %d%%, color %d", name, b.left, b.right, b.caseLevel, b.color);
-    if (ConfigBool(@"PopupDebug", NO)) {
-        UIWindow *w = gWindow;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            GB_LOG(@"1 s later: hidden %d alpha %.2f layer.hidden %d layer.opacity %.2f card alpha %.2f in scene %d",
-                   w.hidden, w.alpha, w.layer.hidden, w.layer.opacity, card.alpha, [w.windowScene.windows containsObject:w]);
-            // What SpringBoard hides while locked
-            Class hm = NSClassFromString(@"SBWindowHidingManager");
-            id manager = [hm respondsToSelector:@selector(sharedInstance)] ? [hm sharedInstance] : nil;
-            for (NSString *sel in @[@"dumpHidingState", @"dumpKnownWindows"]) {
-                SEL s = NSSelectorFromString(sel);
-                if (![manager respondsToSelector:s]) continue;
-                id out = ((id (*)(id, SEL))objc_msgSend)(manager, s);
-                GB_LOG(@"%@: %@", sel, out);
-            }
-            // SBWindow state of the card window and of the cover sheet
-            UIWindow *cover = nil;
-            for (UIWindow *x in w.windowScene.windows)
-                if ([NSStringFromClass(x.class) isEqualToString:@"SBCoverSheetWindow"]) cover = x;
-            for (UIWindow *x in @[w, cover ?: w]) {
-                NSMutableArray *vals = [NSMutableArray array];
-                for (Class c = x.class; c && c != UIWindow.class; c = class_getSuperclass(c)) {
-                    unsigned n = 0;
-                    Ivar *ivars = class_copyIvarList(c, &n);
-                    for (unsigned i = 0; i < n; i++) {
-                        const char *type = ivar_getTypeEncoding(ivars[i]);
-                        NSString *name = @(ivar_getName(ivars[i]));
-                        if (type[0] == '@') [vals addObject:[NSString stringWithFormat:@"%@=%@", name, object_getIvar(x, ivars[i])]];
-                        else if (type[0] == 'B' || type[0] == 'c')
-                            [vals addObject:[NSString stringWithFormat:@"%@=%d", name, *(BOOL *)((uint8_t *)(__bridge void *)x + ivar_getOffset(ivars[i]))]];
-                    }
-                    free(ivars);
-                }
-                GB_LOG(@"%@ state: %@", NSStringFromClass(x.class), [vals componentsJoinedByString:@" "]);
-            }
-        });
-    }
+}
+
+static void ShowCard(NSString *name, GBBattery b) {
+    @try { ShowCardUnsafe(name, b); }
+    @catch (NSException *e) { GB_LOG(@"showing the card failed: %@", e); }
 }
 
 #pragma mark - Triggers

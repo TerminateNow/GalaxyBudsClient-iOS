@@ -208,7 +208,11 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
   reports `hidden 0`, alpha 1, is in the scene, and `SBWindowHidingManager dumpHidingState` says "Active hide range is: OFF"
   (its `_additionalHiddenReasons` is nil too). The cover sheet window has an `SBFTraitsParticipant` (role CoverSheet); the
   card's window has none. So while `-[SBLockScreenManager isUILocked]` is YES, the card is now added to the
-  `SBCoverSheetWindow`'s root view instead of its own window; that's being tested.
+  `SBCoverSheetWindow`'s root view instead of its own window. **That shows on the locked lock screen** (2026-11-26).
+- **Crash (fixed):** a `PopupDebug`-only block built an array literal with the card's window, which is nil while the card
+  is on the lock screen. The exception crashed SpringBoard a second after each lock-screen card (safe mode, four crash
+  reports with `GalaxyBudsPopup.dylib` in the backtrace). The block is gone, and showing and hiding the card now run inside
+  `@try`/`@catch`, so an exception is logged instead of taking SpringBoard down.
 - **Frontmost app.** `-[SpringBoard _accessibilityFrontMostApplication]` returns an `SBApplication` with `bundleIdentifier`.
   When it's `com.galaxybudsclient.ios`, the popup is left to the app.
 - **SF Symbols.** `battery.100/75/50/25/0` and `earbuds` are assumed to exist on iOS 15; missing ones fall back to

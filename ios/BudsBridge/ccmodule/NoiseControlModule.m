@@ -151,7 +151,8 @@ static GBNoiseMode ParseReply(NSString *reply, NSString **error) {
     NSString *reason = [reply hasPrefix:@"ERR "] ? [reply substringFromIndex:4] : reply;
     if ([reason isEqualToString:@"unknown command"]) reason = @"Update BudsBridge to 0.4.0 or newer";
     else if ([reason containsString:@"not paired"] || [reason containsString:@"no paired"]) reason = @"Galaxy Buds not paired";
-    else if ([reason containsString:@"timed out"] || [reason containsString:@"connect failed"]) reason = @"Galaxy Buds not connected";
+    else if ([reason containsString:@"timed out"] || [reason containsString:@"connect failed"] ||
+             [reason isEqualToString:@"not connected"]) reason = @"Galaxy Buds not connected";
     else if ([reason isEqualToString:@"bluetooth is off"]) reason = @"Bluetooth is off";
     *error = reason.length ? [[reason substringToIndex:1].uppercaseString stringByAppendingString:[reason substringFromIndex:1]] : @"Error";
     return GBNoiseModeUnknown;

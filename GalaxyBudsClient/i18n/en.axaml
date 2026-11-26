@@ -454,6 +454,10 @@ Measure level: Select a vertical span to measure the battery level difference be
     <sys:String x:Key="settings_cpopup_position">Position</sys:String>
     <sys:String x:Key="settings_cpopup_position_description">Select the position of the connection popup</sys:String>
     <sys:String x:Key="settings_cpopup_demo">Show demo popup</sys:String>
+    <sys:String x:Key="settings_cpopup_system">Show over other apps and lock screen</sys:String>
+    <sys:String x:Key="settings_cpopup_system_description">Show the battery popup outside this app when the Buds connect (BudsBridge Control Center package)</sys:String>
+    <sys:String x:Key="settings_cpopup_notification">Battery notification</sys:String>
+    <sys:String x:Key="settings_cpopup_notification_description">Keep a notification with the battery levels in Notification Center while the Buds are connected</sys:String>
 
     <!--Settings >>> Crowdsourcing settings-->
     <sys:String x:Key="settings_crowd_header">Crowdsourcing</sys:String>

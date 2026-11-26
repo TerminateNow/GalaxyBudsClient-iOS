@@ -185,6 +185,23 @@
                     Description="{ext:Translate {x:Static i18N:Keys.SettingsCpopupEnableDescription}}"
                     IsChecked="{Binding PopupEnabled, Source={x:Static config:Settings.Data}}" />
 
+                <!-- iOS: settings of the BudsBridge SpringBoard tweak, kept by the BudsBridge service -->
+                <controls:SettingsSwitchItem
+                    Content="{ext:Translate {x:Static i18N:Keys.SettingsCpopupSystem}}"
+                    Description="{ext:Translate {x:Static i18N:Keys.SettingsCpopupSystemDescription}}"
+                    Symbol="PhoneScreenTime"
+                    IsVisible="{Binding IsBudsBridgeSettingsVisible}"
+                    IsEnabled="{Binding IsBudsBridgeSettingsAvailable}"
+                    IsChecked="{Binding SystemPopupEnabled}" />
+
+                <controls:SettingsSwitchItem
+                    Content="{ext:Translate {x:Static i18N:Keys.SettingsCpopupNotification}}"
+                    Description="{ext:Translate {x:Static i18N:Keys.SettingsCpopupNotificationDescription}}"
+                    Symbol="Alert"
+                    IsVisible="{Binding IsBudsBridgeSettingsVisible}"
+                    IsEnabled="{Binding IsBudsBridgeSettingsAvailable}"
+                    IsChecked="{Binding BatteryNotificationEnabled}" />
+
                 <controls:SettingsSwitchItem
                     Content="{ext:Translate {x:Static i18N:Keys.SettingsCpopupCompact}}"
                     Description="{ext:Translate {x:Static i18N:Keys.SettingsCpopupCompactDescription}}"

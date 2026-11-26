@@ -87,15 +87,20 @@ Both are built on Linux or WSL2, without Xcode:
   It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
   - **Background service:** `layout/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` runs `budsrfcomm daemon` as `mobile` on `127.0.0.1:8762`.
     The package's `postinst` loads it and restarts `bluetoothd`, so the tweak loads. `prerm` unloads it, and `postrm` restarts `bluetoothd` on removal.
-  - **Protocol, which is what the iOS app's `IBluetoothService` must speak:** one command line, either `PING`, `LIST`, `CONNECT [MAC] [channel]`, `NOISE [mode]` or `BATTERY`.
+  - **Protocol, which is what the iOS app's `IBluetoothService` must speak:** one command line, either `PING`, `LIST`, `CONNECT [MAC] [channel]`, `NOISE [mode]`, `BATTERY` or `PREF <setting> [on|off]`.
     `CONNECT` answers `OK <channel>` and then passes raw bytes in both directions. Only one `CONNECT` can be active, and others get `ERR busy`.
     `NOISE` (0.4.0) reads or sets the noise control mode. During a `CONNECT` session it slips a `0x78` frame in between the app's frames
     (the pump forwards client data frame by frame once the Buds have sent an `FD` frame) and sends the app a fake `0x77` update;
     without one it opens a short session. `BATTERY` (0.5.0) answers `BATTERY <left> <right> <case> <color>` the same way: from
-    the `CONNECT` session's frames, from levels read in the last 10 s, or from a short session. The protocol is specified in `ios/BudsBridge/README.md`.
+    the `CONNECT` session's frames, from levels read in the last 10 s, or from a short session. Short sessions only use Buds
+    iOS has connected (`ERR not connected` otherwise, 0.5.1): connecting them there kept the service busy for up to a minute.
+    iOS doesn't reconnect the Buds after a `bluetoothd` restart, so the service asks once, in the background, when it starts.
+    `PREF` (0.5.1) reads or sets the popup's `Popup` and `BatteryNotification` settings for the sandboxed app, whose
+    Settings → Connection popup shows them as switches (`Platform/BudsBridgeSettings.cs`).
+    The protocol is specified in `ios/BudsBridge/README.md`.
 - **`ccmodule/`:** a CCSupport Control Center module (separate package `com.galaxybudsclient.noisecc`, `make package-cc`) that speaks `NOISE`.
   It subclasses ControlCenterUIKit's `CCUIMenuModuleViewController`. The private API it uses was read from the device's runtime and is listed in `research/NOTES.md`.
-  - The same package (1.1.0) ships the **connection popup**, `ConnectionPopup.m` → `GalaxyBudsPopup.dylib`, a SpringBoard-only tweak with no hooks.
+  - The same package (1.1.1) ships the **connection popup**, `ConnectionPopup.m` → `GalaxyBudsPopup.dylib`, a SpringBoard-only tweak with no hooks.
     On BluetoothManager's `BluetoothDeviceConnectSuccessNotification` for a "Buds" device it asks the daemon for `BATTERY` and slides
     a card over everything: its own window (a runtime subclass of `SBSecureWindow`), or, while the phone is locked, the
     `SBCoverSheetWindow` (no other SpringBoard window shows on the locked lock screen). Tap opens the app (through

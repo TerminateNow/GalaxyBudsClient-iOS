@@ -20,18 +20,18 @@ Status: **working end to end** on an iPhone 7 running 15.8.8 with Galaxy Buds3 P
 The Samsung SPP service is on **RFCOMM channel 20**. The Buds send `EXTENDED_STATUS_UPDATED` right after the channel opens, and every frame's CRC is valid.
 The 0.3.1 background service (`PING`, `LIST`, `CONNECT` with the saved channel) is verified on the same phone.
 The 0.4.0 `NOISE` command is verified there too, both on its own and slipped into a running `CONNECT` session.
-The 0.5.0 `BATTERY` command and the connection popup are built but **not yet tried on the device**.
+The 0.5.0 `BATTERY` command and the connection popup (card and battery notification) are verified there too.
 
 A second, optional package adds a **Control Center module** for noise control and a **connection popup** that shows the
 battery levels over any app or the lock screen when the Buds connect (see [Control Center module and connection popup](#control-center-module-and-connection-popup)).
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.5.0_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.5.1_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.5.0_iphoneos-arm64.deb
+   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.5.1_iphoneos-arm64.deb
    ```
 
    The install restarts `bluetoothd` so it loads the tweak (Bluetooth drops for a few seconds, then reconnects),
@@ -79,9 +79,15 @@ A client connects to `127.0.0.1:8762` and sends one command line ending in `\n`:
 | `CONNECT [MAC] [channel]` | `OK <channel>`, followed by raw RFCOMM bytes in both directions until either side closes. On failure: `ERR <reason>`, then the connection closes. With no MAC, the default device is used. |
 | `NOISE` | `MODE <off\|anc\|ambient\|adaptive>`: the current noise control mode. On failure: `ERR <reason>`. (0.4.0) |
 | `NOISE <mode>` | Sets the mode (`off`, `anc`, `ambient`, `adaptive`, or `0`–`3`) and answers `OK <mode>`, or `ERR <reason>`. (0.4.0) |
+| `PREF <setting> [on\|off]` | Reads or sets a setting of the connection popup (`Popup`, `BatteryNotification`; both on by default) and answers `PREF <setting> <on\|off>`, or `ERR <reason>`. The app's settings use it, because the sandboxed app can't write the settings file. A change takes effect in SpringBoard right away. (0.5.1) |
 | `BATTERY` | `BATTERY <left> <right> <case> <color>`: battery levels in percent, and the Buds' color ID (the app's `DeviceIds`, `0` if unknown). An earbud that isn't connected reads `0`; a case whose level isn't known reads `0` or more than `100`. On failure: `ERR <reason>`. (0.5.0) |
 
-- Only one `CONNECT` can be active at a time. A second one gets `ERR busy`. `PING`, `LIST`, `NOISE` and `BATTERY` always work.
+- Only one `CONNECT` can be active at a time. A second one gets `ERR busy`. `PING`, `LIST`, `NOISE`, `BATTERY` and `PREF` always work.
+- `NOISE` and `BATTERY` only use Buds that iOS has connected: otherwise they answer `ERR not connected` at once (0.5.1).
+  Before, they tried to connect the Buds themselves, which took up to a minute when the Buds were in their case and kept
+  every other client busy. `CONNECT` (the app) still connects them.
+- iOS doesn't reconnect the Buds by itself after `bluetoothd` restarts, so the service asks for the connection once in the
+  background when it starts (at boot and after an install), without waiting for it (0.5.1).
 - Closing the TCP connection closes the RFCOMM channel. If the Buds disconnect, the service closes the TCP connection.
 - `NOISE` works whether or not a `CONNECT` session is open:
   - **With a session (the app is connected):** the service slips a `NOISE_CONTROLS` frame (`0x78`) into that session between two of the app's frames. It also sends the app a `NOISE_CONTROLS_UPDATE` frame (`0x77`), as if the Buds had sent it, so the app's screen follows.
@@ -161,7 +167,7 @@ whether or not the app is open.
 Install it after the bridge, then respring and add it in **Settings → Control Center**:
 
 ```bash
-sudo dpkg -i com.galaxybudsclient.noisecc_1.1.0_iphoneos-arm64.deb
+sudo dpkg -i com.galaxybudsclient.noisecc_1.1.1_iphoneos-arm64.deb
 ```
 
 ```bash
@@ -197,6 +203,8 @@ Buds3 Pro show their own photos (Silver and White); other models show a generic 
 - While the GalaxyBudsClient app is open, the app shows its own card instead (if its popup setting is on).
 - Each connection posts the notification once per Bluetooth profile (three times within a second on the iPhone 7), so the
   same Buds are ignored for 5 seconds after a card.
+- The app's **Settings → Connection popup** has switches for the popup over other apps and for the battery notification
+  (they use the service's `PREF` command).
 - Settings, in the service's settings file `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`:
   `Popup` (Boolean, `NO` turns the card off), `BatteryNotification` (Boolean, `NO` turns the notification off), `PopupDebug` (Boolean, `YES` logs every Bluetooth notification SpringBoard sees,
   and SpringBoard's windows with their levels each time the card shows) and `PopupWindowLevel` (Real, default `1100`).

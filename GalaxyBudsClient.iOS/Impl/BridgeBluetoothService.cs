@@ -57,7 +57,7 @@ public class BridgeBluetoothService : IBluetoothService
     private NetworkStream? _stream;
     private CancellationTokenSource? _readCancel;
 
-    private static int Port
+    internal static int Port
     {
         get
         {

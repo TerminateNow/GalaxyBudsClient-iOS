@@ -1,9 +1,9 @@
 Package: com.galaxybudsclient.noisecc
 Name: Galaxy Buds Noise Control and Connection Popup
-Version: 1.1.0
+Version: 1.1.1
 Architecture: iphoneos-arm64
 Description: Control Center module for Galaxy Buds noise control (GalaxyBudsClient iOS port). Tap to switch between noise cancelling and ambient sound, long press for Off and Adaptive. Works whether or not the app is open. Also shows a popup with the battery levels over any app or the lock screen when the Buds connect.
 Maintainer: GalaxyBudsClient-iOS
 Author: GalaxyBudsClient-iOS
 Section: Tweaks
-Depends: firmware (>= 15.0), mobilesubstrate, com.opa334.ccsupport (>= 1.3), com.galaxybudsclient.budsrfcomm (>= 0.5.0)
+Depends: firmware (>= 15.0), mobilesubstrate, com.opa334.ccsupport (>= 1.3), com.galaxybudsclient.budsrfcomm (>= 0.5.1)

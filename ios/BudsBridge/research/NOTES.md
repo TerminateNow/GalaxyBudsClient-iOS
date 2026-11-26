@@ -243,3 +243,15 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
   is the default action. **Shows** in Notification Center on the iPhone 7. Tapping it cleared it, so the action's
   `shouldDismissBulletin` (exists on 15.8.8) is set to NO, and the tweak reposts it 3 s after opening the app from the card.
   Verified: it stays after being tapped, and other apps' notifications (a Reminder) still arrive with the `BBServer` hook.
+
+## Short sessions and Bluetooth restarts (budsrfcomm 0.5.1)
+
+- After `bluetoothd` restarts (package install, reboot), iOS doesn't reconnect the Buds by itself: three minutes later
+  `LIST` still showed them as not connected. A `connectPeer:` from the service does reconnect them, in 10–45 seconds.
+- While the service's own `connectPeer:` request is pending, a fresh `retrievePairedPeersWithOptions:` lookup doesn't
+  report the peer as connected either, so the wait can't notice iOS connecting it. Each short `NOISE` session (the
+  Control Center tile asks on every respring) used to wait out the full timeout, about 45–60 s, with every other client
+  getting `ERR busy`, the popup's `BATTERY` included.
+- So 0.5.1's short sessions (`NOISE`, `BATTERY`) fail at once with `ERR not connected` when the Buds aren't connected, a
+  timed-out connect is cancelled (`cancelPeerConnection:`), and the service asks for the connection once, in the
+  background, 5 s after it starts. Verified: after an install the Buds were back 23 s later, and `BATTERY` answered at once.

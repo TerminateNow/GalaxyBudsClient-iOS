@@ -10,7 +10,9 @@
 // to the cover sheet's window instead).
 //
 // Settings, in the budsrfcomm settings file (budsrfcomm config, or edit the plist):
-//   Popup       NO turns the popup off (default YES)
+//   Popup       NO turns the popup off (default YES). The app's settings change this and BatteryNotification through
+//               budsrfcomm's PREF command, which posts GB_PREFS_NOTIFICATION.
+//   BatteryNotification  NO turns the battery notification off (default YES)
 //   PopupDebug  YES logs every Bluetooth notification SpringBoard sees (to find the right one on another iOS build),
 //               and SpringBoard's windows with their levels each time the card shows
 //   PopupWindowLevel  the card window's level (default 1100); it must be above the lock screen's windows
@@ -36,6 +38,7 @@
 #define GB_IMAGES_DIR @"/var/jb/Library/Application Support/GalaxyBudsPopup"
 #define GB_APP_BUNDLE_ID @"com.galaxybudsclient.ios"
 #define GB_SHOW_NOTIFICATION "com.galaxybudsclient.popup.show"
+#define GB_PREFS_NOTIFICATION "com.galaxybudsclient.popup.prefs"   // budsrfcomm's PREF changed a setting (from the app)
 
 // BluetoothManager.framework posts these with a BluetoothDevice as the object
 static NSString *const kConnectNotification = @"BluetoothDeviceConnectSuccessNotification";
@@ -854,6 +857,17 @@ static void OnShowRequest(void) {
     });
 }
 
+// The app turned a setting on or off (through budsrfcomm's PREF command): apply the notification setting now.
+// Popup is read on every connection anyway.
+static void OnPrefsChanged(void) {
+    if (!ConfigBool(@"BatteryNotification", YES)) {
+        GB_LOG(@"battery notification turned off");
+        RemoveBatteryNotification();
+    } else if (gConnectedName) {
+        RefreshNotification(@"turned on");
+    }
+}
+
 // After a respring the Buds may already be connected: no connect notification comes, so ask the daemon
 static void CheckAlreadyConnected(void) {
     dispatch_async(gQueue, ^{
@@ -886,6 +900,7 @@ __attribute__((constructor)) static void GBPopupInit(void) {
         }
         int token;
         notify_register_dispatch(GB_SHOW_NOTIFICATION, &token, dispatch_get_main_queue(), ^(int t) { OnShowRequest(); });
+        notify_register_dispatch(GB_PREFS_NOTIFICATION, &token, dispatch_get_main_queue(), ^(int t) { OnPrefsChanged(); });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ CheckAlreadyConnected(); });
         GB_LOG(@"loaded");
     }

@@ -27,6 +27,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
         AppDomain.CurrentDomain.UnhandledException += (_, args) => LogFatal(args.ExceptionObject as Exception);
 
         PlatformImpl.InjectExternalBackend(new IosPlatformImplCreator());
+        BudsBridgeSettings.PortProvider = () => BridgeBluetoothService.Port;
         RequestNotificationPermission();
 
         return base.CustomizeAppBuilder(builder)

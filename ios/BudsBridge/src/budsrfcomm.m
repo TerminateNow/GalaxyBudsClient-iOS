@@ -35,7 +35,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define BB_VERSION "0.5.0"
+#define BB_VERSION "0.5.1"
 #define BB_DEFAULT_PORT 8762
 #define BB_CONFIG_PATH "/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist"
 #define BB_MOBILE_UID 501
@@ -421,7 +421,12 @@ static BOOL ConnectPeer(BBSession *s) {
     BBLog(already ? "device already connected, refreshing session..."
                   : "connecting to device (make sure at least one bud is out of the case)...");
     if (!WaitFor(already ? 8 : 20, ^{ return done; })) {
-        if (!already) { BBLog("timed out waiting for connection"); s.error = @"connect timed out"; return NO; }
+        if (!already) {
+            BBLog("timed out waiting for connection");
+            OnCB(^{ [s.manager cancelPeerConnection:s.peer]; });  // don't leave the request pending
+            s.error = @"connect timed out";
+            return NO;
+        }
         BBLog("no connect confirmation (peer was already connected) - continuing");
     } else if (err) {
         if (!already) { BBLog("connection failed: error %ld", (long)err); s.error = @"connect failed"; return NO; }
@@ -825,6 +830,9 @@ static int CmdServe(NSString *macArg, int channel, NSString *uuid, int port) {
 //   BATTERY                    -> "BATTERY <left> <right> <case> <color>\n" or "ERR <reason>\n". Percentages; 0 for an
 //                                 earbud that isn't connected, 0 or >100 for a case whose level isn't known. color is
 //                                 the buds' DeviceIds value (0 if unknown).
+//   PREF <setting> [on|off]    -> "PREF <setting> <on|off>\n" or "ERR <reason>\n": reads or sets a setting of the
+//                                 noisecc package's SpringBoard tweak, kept in this service's settings file (the app is
+//                                 sandboxed and can't write it). Settings: Popup, BatteryNotification (default on).
 //
 // Only one CONNECT session can be active at a time; others get "ERR busy". LIST and PING always work.
 // NOISE works either way: during a CONNECT session its frame is slipped into that session (and the client gets a
@@ -928,8 +936,21 @@ static void ReadFrames(BBSession *s, BBFramer *frames, double seconds, BOOL *see
 static BOOL ShortNoiseSession(int setMode, NSString **error) {
     BBSession *s = [BBSession new];
     NSString *mac = nil;
-    if (!(StartManager(s) && (mac = ResolveAddress(s, nil)) && FindPeer(s, mac) && ConnectPeer(s) &&
-          OpenBudsChannel(s, mac, 0, gUUIDOverride))) {
+    if (!(StartManager(s) && (mac = ResolveAddress(s, nil)) && FindPeer(s, mac))) {
+        *error = s.error ?: @"unknown error";
+        return NO;
+    }
+    // Short sessions only use buds iOS has connected. Connecting them here took up to a minute when they were in their
+    // case (or still reconnecting after a bluetoothd restart, which this service's own pending request then held up),
+    // and every other client got "ERR busy" meanwhile. CONNECT (the app) still connects them.
+    __block BOOL connected = NO;
+    OnCB(^{ connected = s.peer.state == kPeerConnected; });
+    if (!connected) {
+        BBLog("short session: the buds aren't connected");
+        *error = @"not connected";
+        return NO;
+    }
+    if (!(ConnectPeer(s) && OpenBudsChannel(s, mac, 0, gUUIDOverride))) {
         *error = s.error ?: @"unknown error";
         return NO;
     }
@@ -1053,6 +1074,32 @@ static void HandleBattery(int cfd) {
     else WriteBattery(cfd);
 }
 
+// Settings of the SpringBoard tweak (ccmodule/ConnectionPopup.m) that the app can change, all on by default
+static NSString *PrefName(NSString *arg) {
+    for (NSString *name in @[@"Popup", @"BatteryNotification"])
+        if (arg && [name caseInsensitiveCompare:arg] == NSOrderedSame) return name;
+    return nil;
+}
+
+static void HandlePref(int cfd, NSArray<NSString *> *tok) {
+    NSString *name = PrefName(tok.count > 1 ? tok[1] : nil);
+    if (!name) { WriteStr(cfd, @"ERR unknown setting (use Popup or BatteryNotification)\n"); return; }
+    NSMutableDictionary *cfg = LoadConfig();
+    if (tok.count > 2) {
+        NSString *v = tok[2].lowercaseString;
+        BOOL on = [v isEqualToString:@"on"] || [v isEqualToString:@"1"] || [v isEqualToString:@"yes"] || [v isEqualToString:@"true"];
+        BOOL off = [v isEqualToString:@"off"] || [v isEqualToString:@"0"] || [v isEqualToString:@"no"] || [v isEqualToString:@"false"];
+        if (!on && !off) { WriteStr(cfd, @"ERR use on or off\n"); return; }
+        cfg[name] = @(on);
+        if (!SaveConfig(cfg)) { WriteStr(cfd, @"ERR cannot save the settings\n"); return; }
+        BBLog("setting %s turned %s", name.UTF8String, on ? "on" : "off");
+        notify_post("com.galaxybudsclient.popup.prefs");  // the SpringBoard tweak applies it right away
+    }
+    id value = cfg[name];
+    BOOL on = [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : YES;
+    WriteStr(cfd, [NSString stringWithFormat:@"PREF %@ %@\n", name, on ? @"on" : @"off"]);
+}
+
 static void *ClientThread(void *arg) {
     int cfd = (int)(intptr_t)arg;
     @autoreleasepool {
@@ -1076,10 +1123,32 @@ static void *ClientThread(void *arg) {
             }
             else if ([cmd isEqualToString:@"NOISE"]) HandleNoise(cfd, tok.count > 1 ? tok[1] : nil);
             else if ([cmd isEqualToString:@"BATTERY"]) HandleBattery(cfd);
+            else if ([cmd isEqualToString:@"PREF"]) HandlePref(cfd, tok);
             else WriteStr(cfd, @"ERR unknown command\n");
         }
     }
     close(cfd);
+    return NULL;
+}
+
+// The service starts at boot and after an install, both times bluetoothd has just (re)started, and iOS doesn't reconnect
+// the buds after a bluetoothd restart by itself (15.8.8). Ask for the connection once, in the background: short sessions
+// only use connected buds, so without this nothing would bring them back until the user does.
+static void *ReconnectAfterStart(void *arg) {
+    (void)arg;
+    @autoreleasepool {
+        sleep(5);
+        if (gBusy || gStop) return NULL;  // a client already has them
+        BBSession *s = [BBSession new];
+        NSString *mac = nil;
+        if (!(StartManager(s) && (mac = ResolveAddress(s, nil)) && FindPeer(s, mac))) return NULL;
+        __block BOOL connected = NO;
+        OnCB(^{ connected = s.peer.state == kPeerConnected; });
+        if (connected) return NULL;
+        BBLog("asking iOS to reconnect %s after the start", mac.UTF8String);
+        // No callback of our own (the manager is shared with client sessions) and no waiting
+        OnCB(^{ [s.manager connectPeer:s.peer options:@{}]; });
+    }
     return NULL;
 }
 
@@ -1094,6 +1163,8 @@ static int CmdDaemon(int port) {
         gWake[0] = gWake[1] = -1;
     }
     BBLog("budsrfcomm " BB_VERSION " daemon listening on 127.0.0.1:%d", port);
+    pthread_t reconnect;
+    if (pthread_create(&reconnect, NULL, ReconnectAfterStart, NULL) == 0) pthread_detach(reconnect);
     while (!gStop) {
         struct pollfd pl = {lfd, POLLIN, 0};
         if (poll(&pl, 1, 500) <= 0) continue;  // wake up regularly to notice SIGTERM
@@ -1190,7 +1261,8 @@ static void Usage(void) {
         "  -t  seconds to listen (probe, default 15)\n"
         "  -p  TCP port for serve/daemon/config (default: remembered, else 8762)\n"
         "  -v  verbose (hex dumps of all traffic)\n\n"
-        "daemon protocol: send \"PING\", \"LIST\", \"CONNECT [MAC] [channel]\", \"NOISE [mode]\" or \"BATTERY\" + newline;\n"
+        "daemon protocol: send \"PING\", \"LIST\", \"CONNECT [MAC] [channel]\", \"NOISE [mode]\", \"BATTERY\" or\n"
+        "\"PREF <setting> [on|off]\" + newline; "
         "see README.\n");
 }
 

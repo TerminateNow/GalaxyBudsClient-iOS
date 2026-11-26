@@ -232,3 +232,12 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
   the app's behalf fails with "Notifications are not allowed for this application", so the app asks at launch
   (`GalaxyBudsClient.iOS/AppDelegate.cs`). `BluetoothDeviceDisconnectSuccessNotification` and
   `BluetoothDeviceBatteryChangedNotification` are posted in SpringBoard with the `BluetoothDevice` as the object.
+- **Battery notification through BulletinBoard** (2026-11-26): after the app was allowed (`VersionedSectionInfo.plist` has
+  `authorizationStatus 2` for `com.galaxybudsclient.ios`), SpringBoard's `UNUserNotificationCenter initWithBundleIdentifier:`
+  still reads "not determined" and `addNotificationRequest:` fails with "Notifications are not allowed for this application".
+  So the tweak publishes a `BBBulletin` itself: it swaps `-[BBServer initWithQueue:]` and
+  `-initWithQueue:dataProviderManager:syncService:dismissalSyncCache:observerListener:conduitListener:settingsListener:` at load
+  to keep the server, then on `__BBServerQueue` (or the server's `_queue` ivar) calls
+  `withdrawBulletinRequestsWithRecordID:forSectionID:` and `publishBulletin:destinations:` with destinations 2|4 (Notification
+  Center, lock screen; 8 would add a banner) and `interruptionLevel` 0 (passive). `BBAction actionWithLaunchBundleID:callblock:`
+  is the default action. Published without error on the iPhone 7; whether it shows is being checked.

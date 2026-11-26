@@ -18,7 +18,7 @@
 // `budsrfcomm popup` shows the card for the connected Buds without reconnecting them (a Darwin notification).
 
 #import <UIKit/UIKit.h>
-#import <UserNotifications/UserNotifications.h>
+#include <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <arpa/inet.h>
@@ -594,30 +594,63 @@ static void ShowCard(NSString *name, GBBattery b) {
 
 #pragma mark - Battery notification
 
-// While Buds are connected, a notification in the GalaxyBudsClient app's name shows their battery levels in Notification
-// Center and on the lock screen. It's posted passive (no sound, banner or screen wake), replaced in place on every
-// refresh (which also moves it back to the top), and removed when the Buds disconnect. iOS has no pinned notifications,
-// so one that arrives after a refresh sits above it until the next one.
+// While Buds are connected, a notification in the GalaxyBudsClient app's section shows their battery levels in
+// Notification Center and on the lock screen. It's passive (no sound, banner or screen wake), replaced on every refresh
+// (which also moves it back to the top), and withdrawn when the Buds disconnect. iOS has no pinned notifications, so
+// one that arrives after a refresh sits above it until the next one.
+//
+// UNUserNotificationCenter's initWithBundleIdentifier: doesn't work from SpringBoard ("Notifications are not allowed for
+// this application", even with the app allowed: 15.8.8), so the bulletin goes straight to BulletinBoard's server, which
+// lives in SpringBoard. Its initializers are swapped once, at load, to keep a pointer to it; that's this tweak's only hook.
+// The app's section needs notifications allowed, which only the app can ask for (GalaxyBudsClient.iOS/AppDelegate.cs).
 
-@interface UNUserNotificationCenter (GBPrivate)
-- (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier;
+@interface NSObject (GBBulletinBoard)
+- (void)publishBulletin:(id)bulletin destinations:(unsigned long long)destinations;               // BBServer
+- (void)withdrawBulletinRequestsWithRecordID:(NSString *)recordID forSectionID:(NSString *)sectionID;
++ (id)actionWithLaunchBundleID:(NSString *)bundleID callblock:(id)callblock;                        // BBAction
 @end
 
-#define GB_NOTIFICATION_ID @"com.galaxybudsclient.popup.battery"
+#define GB_BULLETIN_RECORD_ID @"com.galaxybudsclient.popup.battery"
 static const NSTimeInterval kNotificationRefreshSeconds = 600;
 static const NSTimeInterval kMinRefreshSeconds = 60;   // battery-change refreshes closer together than this are skipped
+// BBServer destinations: 2 Notification Center, 4 lock screen (8 would add a banner)
+static const unsigned long long kBulletinDestinations = 2 | 4;
 
-static UNUserNotificationCenter *AppNotificationCenter(void) {
-    static UNUserNotificationCenter *center;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        @try {
-            if ([UNUserNotificationCenter instancesRespondToSelector:@selector(initWithBundleIdentifier:)])
-                center = [[UNUserNotificationCenter alloc] initWithBundleIdentifier:GB_APP_BUNDLE_ID];
-        } @catch (NSException *e) { GB_LOG(@"notification center: %@", e); }
-        if (!center) GB_LOG(@"can't post notifications for the app on this build");
-    });
-    return center;
+static id gBBServer;
+static IMP gOrigInitWithQueue, gOrigInitFull;
+
+static id HookInitWithQueue(id self, SEL _cmd, id queue) {
+    id server = ((id (*)(id, SEL, id))gOrigInitWithQueue)(self, _cmd, queue);
+    if (server) gBBServer = server;
+    return server;
+}
+
+static id HookInitFull(id self, SEL _cmd, id a, id b, id c, id d, id e, id f, id g) {
+    id server = ((id (*)(id, SEL, id, id, id, id, id, id, id))gOrigInitFull)(self, _cmd, a, b, c, d, e, f, g);
+    if (server) gBBServer = server;
+    return server;
+}
+
+static void HookBulletinServer(void) {
+    @try {
+        Class server = NSClassFromString(@"BBServer");
+        if (!server) { GB_LOG(@"no BBServer: no battery notification"); return; }
+        Method m = class_getInstanceMethod(server, NSSelectorFromString(@"initWithQueue:"));
+        if (m) gOrigInitWithQueue = method_setImplementation(m, (IMP)HookInitWithQueue);
+        m = class_getInstanceMethod(server, NSSelectorFromString(
+            @"initWithQueue:dataProviderManager:syncService:dismissalSyncCache:observerListener:conduitListener:settingsListener:"));
+        if (m) gOrigInitFull = method_setImplementation(m, (IMP)HookInitFull);
+        if (!gOrigInitWithQueue && !gOrigInitFull) GB_LOG(@"BBServer initializers not found: no battery notification");
+    } @catch (NSException *e) { GB_LOG(@"hooking BBServer failed: %@", e); }
+}
+
+// BulletinBoard's calls must run on its queue
+static dispatch_queue_t BulletinQueue(void) {
+    void **global = (void **)dlsym(RTLD_DEFAULT, "__BBServerQueue");
+    if (global && *global) return (__bridge dispatch_queue_t)*global;
+    Ivar ivar = gBBServer ? class_getInstanceVariable(object_getClass(gBBServer), "_queue") : NULL;
+    id queue = ivar ? object_getIvar(gBBServer, ivar) : nil;
+    return queue;
 }
 
 static NSString *BatteryText(GBBattery b) {
@@ -628,46 +661,48 @@ static NSString *BatteryText(GBBattery b) {
     return parts.count ? [parts componentsJoinedByString:@" · "] : @"Earbuds in the case";
 }
 
-static void AddBatteryNotification(UNUserNotificationCenter *center, NSString *name, GBBattery b) {
-    UNMutableNotificationContent *content = [UNMutableNotificationContent new];
-    content.title = DisplayName(name);
-    content.body = BatteryText(b);
-    content.threadIdentifier = GB_NOTIFICATION_ID;
-    if ([content respondsToSelector:@selector(setInterruptionLevel:)])
-        content.interruptionLevel = UNNotificationInterruptionLevelPassive;
-    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:GB_NOTIFICATION_ID content:content trigger:nil];
-    [center addNotificationRequest:request withCompletionHandler:^(NSError *error) {
-        if (error) GB_LOG(@"battery notification failed: %@", error);
-        else GB_LOG(@"battery notification: %@", content.body);
-    }];
+static void OnBulletinQueue(void (^block)(id server)) {
+    id server = gBBServer;
+    dispatch_queue_t queue = BulletinQueue();
+    if (!server || !queue) { GB_LOG(@"BulletinBoard server not found: no battery notification"); return; }
+    dispatch_async(queue, ^{
+        @try { block(server); }
+        @catch (NSException *e) { GB_LOG(@"battery notification failed: %@", e); }
+    });
 }
 
 static void PostBatteryNotification(NSString *name, GBBattery b) {
     if (!ConfigBool(@"BatteryNotification", YES)) return;
-    UNUserNotificationCenter *center = AppNotificationCenter();
-    if (!center) return;
-    @try {
-        [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
-            UNAuthorizationStatus status = settings.authorizationStatus;
-            if (status == UNAuthorizationStatusNotDetermined) {
-                // Only the app can ask: asking from SpringBoard fails with "Notifications are not allowed for this
-                // application" (seen on 15.8.8). The app asks at launch.
-                GB_LOG(@"no notification permission yet: open GalaxyBudsClient once and allow notifications");
-            } else if (status == UNAuthorizationStatusDenied) {
-                GB_LOG(@"notifications are off for GalaxyBudsClient (Settings > Notifications)");
-            } else {
-                AddBatteryNotification(center, name, b);
-            }
-        }];
-    } @catch (NSException *e) { GB_LOG(@"battery notification failed: %@", e); }
+    NSString *title = DisplayName(name), *message = BatteryText(b);
+    OnBulletinQueue(^(id server) {
+        Class bulletinClass = NSClassFromString(@"BBBulletin"), actionClass = NSClassFromString(@"BBAction");
+        if (!bulletinClass) { GB_LOG(@"no BBBulletin"); return; }
+        id bulletin = [bulletinClass new];
+        NSDate *now = [NSDate date];
+        NSDictionary *fields = @{
+            @"title": title, @"message": message,
+            @"sectionID": GB_APP_BUNDLE_ID, @"recordID": GB_BULLETIN_RECORD_ID,
+            @"publisherBulletinID": GB_BULLETIN_RECORD_ID, @"bulletinID": NSUUID.UUID.UUIDString,
+            @"threadID": GB_BULLETIN_RECORD_ID, @"date": now, @"publicationDate": now,
+        };
+        for (NSString *key in fields) [bulletin setValue:fields[key] forKey:key];
+        if ([bulletin respondsToSelector:NSSelectorFromString(@"setInterruptionLevel:")])
+            [bulletin setValue:@0 forKey:@"interruptionLevel"];  // passive
+        if ([bulletin respondsToSelector:NSSelectorFromString(@"setClearable:")]) [bulletin setValue:@YES forKey:@"clearable"];
+        id open = [actionClass respondsToSelector:@selector(actionWithLaunchBundleID:callblock:)]
+                  ? [actionClass actionWithLaunchBundleID:GB_APP_BUNDLE_ID callblock:nil] : nil;
+        if (open) [bulletin setValue:open forKey:@"defaultAction"];
+        [server withdrawBulletinRequestsWithRecordID:GB_BULLETIN_RECORD_ID forSectionID:GB_APP_BUNDLE_ID];
+        [server publishBulletin:bulletin destinations:kBulletinDestinations];
+        GB_LOG(@"battery notification: %@", message);
+    });
 }
 
 static void RemoveBatteryNotification(void) {
-    UNUserNotificationCenter *center = AppNotificationCenter();
-    @try {
-        [center removeDeliveredNotificationsWithIdentifiers:@[GB_NOTIFICATION_ID]];
-        [center removePendingNotificationRequestsWithIdentifiers:@[GB_NOTIFICATION_ID]];
-    } @catch (NSException *e) { GB_LOG(@"removing the battery notification failed: %@", e); }
+    if (!gBBServer) return;
+    OnBulletinQueue(^(id server) {
+        [server withdrawBulletinRequestsWithRecordID:GB_BULLETIN_RECORD_ID forSectionID:GB_APP_BUNDLE_ID];
+    });
 }
 
 #pragma mark - Triggers
@@ -812,6 +847,7 @@ static void CheckAlreadyConnected(void) {
 
 __attribute__((constructor)) static void GBPopupInit(void) {
     @autoreleasepool {
+        HookBulletinServer();  // before SpringBoard creates it
         gQueue = dispatch_queue_create("com.galaxybudsclient.popup", DISPATCH_QUEUE_SERIAL);
         gLastShown = [NSMutableDictionary dictionary];
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;

@@ -179,3 +179,25 @@ Read from the device's runtime with a small class-dump tool (`objc_copyClassList
 - CCSupport 1.3.13 (rootless) loads bundles from `/var/jb/Library/ControlCenter/Bundles`. Its `Info.plist` keys are
   `CCSModuleSize` (`Portrait`/`Landscape` → `Width`/`Height`) and `CCSGetModuleSizeAtRuntime`. The name in Settings is `CFBundleDisplayName`.
 - The SF Symbols used (`ear`, `ear.fill`, `ear.and.waveform`, `wand.and.stars`) exist on the device.
+
+## Connection popup (budsrfcomm 0.5.0, noisecc 1.1.0): assumptions not yet verified on the device
+
+The popup (`ccmodule/ConnectionPopup.m`, loaded into SpringBoard) was written without a device. Each of these needs checking
+on the iPhone 7 / 15.8.8, and this section updated with what's found:
+
+- **Connection event.** BluetoothManager.framework posts `BluetoothDeviceConnectSuccessNotification` on the default
+  `NSNotificationCenter` in SpringBoard, with a `BluetoothDevice` (`-name`, `-address`) as the object. This is the name other
+  tweaks use; it's not read from this device's runtime. With `PopupDebug` on, every notification whose name contains
+  "Bluetooth" is logged, which shows the real name if this one is wrong. It may fire once per profile (A2DP, HFP), so the
+  popup ignores the same device for 30 seconds.
+- **Window.** A `UIWindow` created with SpringBoard's first `UIWindowScene` (or `initWithFrame:` if there's none), window level
+  1100 (status bar + 100), `-_setSecure:YES` so it also shows on the lock screen, `-_canBecomeKeyWindow` NO, and `hitTest`
+  passing touches outside the card through. Whether 1100 is above the lock screen and banners on 15.8.8 is unknown.
+- **Frontmost app.** `-[SpringBoard _accessibilityFrontMostApplication]` returns an `SBApplication` with `bundleIdentifier`.
+  When it's `com.galaxybudsclient.ios`, the popup is left to the app.
+- **SF Symbols.** `battery.100/75/50/25/0` and `earbuds` are assumed to exist on iOS 15; missing ones fall back to
+  `battery.100` and `headphones`.
+- **Status message offsets** (`BATTERY`): left/right battery at payload bytes 2/3, case at 7, color IDs (u16le) at 14/16 in
+  `EXTENDED_STATUS_UPDATED`; left/right at 1/2 and case at 6 in `STATUS_UPDATED`. Checked against the app's decoder and its
+  recorded messages for Buds Live, Pro, 2, 2 Pro and FE; Buds3 Pro uses the same branch of the decoder. The Buds+ keeps its
+  colors one byte later.

@@ -3,7 +3,8 @@
 #
 #   make SDK=/path/to/iPhoneOS15.6.sdk          -> build/budsrfcomm, build/BudsBridge.dylib, build/GalaxyBudsNoise
 #   make package SDK=...                        -> build/com.galaxybudsclient.budsrfcomm_<ver>_iphoneos-arm64.deb
-#   make package-cc SDK=...                     -> build/com.galaxybudsclient.noisecc_<ver>_iphoneos-arm64.deb (Control Center module)
+#   make package-cc SDK=...                     -> build/com.galaxybudsclient.noisecc_<ver>_iphoneos-arm64.deb
+#                                                  (Control Center module + the SpringBoard connection popup)
 
 SDK      ?= $(THEOS)/sdks/iPhoneOS15.6.sdk
 CLANG    ?= clang
@@ -23,8 +24,13 @@ DAEMONDIR := /var/jb/Library/LaunchDaemons
 CC_VERSION := $(shell sed -n 's/^Version: //p' ccmodule/control)
 CC_PKG     := com.galaxybudsclient.noisecc
 CC_BUNDLE  := /var/jb/Library/ControlCenter/Bundles/GalaxyBudsNoise.bundle
+POPUP_IMAGES_DIR := /var/jb/Library/Application Support/GalaxyBudsPopup
+# Earbud photos for the popup, taken from the app: <DeviceIds value>:<image name>. Installed as <value>-0.png (left)
+# and <value>-1.png (right). Models without an entry get a generic symbol.
+APP_IMAGES   := ../../GalaxyBudsClient/Resources/Device/Realistic
+POPUP_IMAGES := 340:Buds3ProSilver 341:Buds3ProWhite
 
-all: build/budsrfcomm build/BudsBridge.dylib build/GalaxyBudsNoise
+all: build/budsrfcomm build/BudsBridge.dylib build/GalaxyBudsNoise build/GalaxyBudsPopup.dylib
 
 build/budsrfcomm: src/budsrfcomm.m src/PrivateCoreBluetooth.h entitlements.plist
 	@mkdir -p build
@@ -54,11 +60,24 @@ build/GalaxyBudsNoise: ccmodule/NoiseControlModule.m
 		-o $@ ccmodule/NoiseControlModule.m
 	$(LDID) -S $@
 
-package-cc: build/GalaxyBudsNoise
-	rm -rf build/pkgcc && mkdir -p build/pkgcc/DEBIAN build/pkgcc$(CC_BUNDLE)
+# Connection popup: a tweak loaded into SpringBoard only (no hooks; see ccmodule/ConnectionPopup.m)
+build/GalaxyBudsPopup.dylib: ccmodule/ConnectionPopup.m
+	@mkdir -p build
+	$(CLANG) $(CFLAGS) -target arm64-apple-ios15.0 -isysroot $(SDK) -fuse-ld=lld --ld-path=$(LD64) -dynamiclib \
+		-install_name $(TWEAKDIR)/GalaxyBudsPopup.dylib -framework Foundation -framework UIKit -framework CoreGraphics -framework QuartzCore \
+		-o $@ ccmodule/ConnectionPopup.m
+	$(LDID) -S $@
+
+package-cc: build/GalaxyBudsNoise build/GalaxyBudsPopup.dylib
+	rm -rf build/pkgcc && mkdir -p build/pkgcc/DEBIAN build/pkgcc$(CC_BUNDLE) build/pkgcc$(TWEAKDIR) "build/pkgcc$(POPUP_IMAGES_DIR)"
 	cp ccmodule/control build/pkgcc/DEBIAN/control
 	cp build/GalaxyBudsNoise ccmodule/Info.plist ccmodule/SettingsIcon@2x.png ccmodule/SettingsIcon@3x.png build/pkgcc$(CC_BUNDLE)/
 	chmod 0644 build/pkgcc$(CC_BUNDLE)/Info.plist build/pkgcc$(CC_BUNDLE)/*.png
+	cp build/GalaxyBudsPopup.dylib ccmodule/GalaxyBudsPopup.plist build/pkgcc$(TWEAKDIR)/
+	for entry in $(POPUP_IMAGES); do id=$${entry%%:*}; name=$${entry#*:}; \
+		cp "$(APP_IMAGES)/$$name-0.png" "build/pkgcc$(POPUP_IMAGES_DIR)/$$id-0.png" && \
+		cp "$(APP_IMAGES)/$$name-1.png" "build/pkgcc$(POPUP_IMAGES_DIR)/$$id-1.png" || exit 1; done
+	chmod 0644 build/pkgcc$(TWEAKDIR)/GalaxyBudsPopup.plist "build/pkgcc$(POPUP_IMAGES_DIR)"/*.png
 	dpkg-deb -Zgzip --root-owner-group -b build/pkgcc build/$(CC_PKG)_$(CC_VERSION)_iphoneos-arm64.deb
 
 clean:

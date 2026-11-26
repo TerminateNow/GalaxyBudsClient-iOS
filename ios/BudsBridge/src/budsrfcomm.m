@@ -10,6 +10,8 @@
 //   budsrfcomm config [MAC] [-c ch] [-p port] show or set the default device / its channel / the port
 //   budsrfcomm forget                        clear the remembered settings
 //   budsrfcomm noise [mode]                  show or set the noise control mode through the daemon
+//   budsrfcomm battery                       show the battery levels (left, right, case) through the daemon
+//   budsrfcomm popup                         show the connection popup (noisecc package's SpringBoard tweak) now
 //
 // MAC defaults to the remembered device, else the paired device named "...Buds...". Channels that work
 // are remembered per device in the settings file below.
@@ -23,6 +25,7 @@
 #include <getopt.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <notify.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -32,7 +35,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define BB_VERSION "0.4.0"
+#define BB_VERSION "0.5.0"
 #define BB_DEFAULT_PORT 8762
 #define BB_CONFIG_PATH "/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist"
 #define BB_MOBILE_UID 501
@@ -228,6 +231,7 @@ typedef void (^BBSegmentBlock)(const uint8_t *p, size_t len, BOOL isFrame, BOOL 
 #pragma mark - Noise control (NOISE command)
 
 // Message IDs (GalaxyBudsClient/Message/SppMessageEnums.cs)
+#define MSG_STATUS_UPDATED          0x60   // buds -> phone: battery and placement changes
 #define MSG_EXTENDED_STATUS_UPDATED 0x61
 #define MSG_NOISE_CONTROLS_UPDATE   0x77   // buds -> phone: payload[0] = mode
 #define MSG_NOISE_CONTROLS          0x78   // phone -> buds: payload[0] = mode
@@ -265,6 +269,7 @@ static pthread_mutex_t gStateLock = PTHREAD_MUTEX_INITIALIZER;
 static int gNoiseMode = -1;              // last known mode, -1 = unknown
 static double gNoiseModeTime = 0;        // when it was learned
 static BOOL gSessionActive = NO;         // a CONNECT session (the app) is being pumped
+static double gSessionStart = 0;         // when it started
 static BOOL gSessionAligned = NO;        // ... and the buds use FD framing, so frames can be slipped in
 static NSMutableArray<NSData *> *gToBuds, *gToClient;  // frames to slip into the active session
 static int gWake[2] = {-1, -1};          // pipe that wakes the pump when frames are queued
@@ -276,10 +281,31 @@ static void SetNoiseMode(int mode) {
     pthread_mutex_unlock(&gStateLock);
 }
 
-// Learn the noise mode from a complete, CRC-valid frame. Returns the message ID.
+// Battery levels (BATTERY command), in percent. 0 for an earbud means it isn't connected; the case reads 0 or
+// above 100 when the buds don't know its level (lid closed, out of range). gColor is the DeviceIds value the
+// app uses for its earbud images (Buds3 Pro: 340 silver, 341 white), 0 if unknown.
+static int gBattL = -1, gBattR = -1, gBattCase = -1, gColor = 0;
+static double gBattTime = 0;             // when they were learned
+
+static void SetBattery(int l, int r, int c, int color) {
+    pthread_mutex_lock(&gStateLock);
+    gBattL = l; gBattR = r; gBattCase = c; gBattTime = Now();
+    if (color > 0) gColor = color;
+    pthread_mutex_unlock(&gStateLock);
+}
+
+// Learn the noise mode and battery levels from a complete, CRC-valid frame. Returns the message ID.
+// The offsets are those of Buds Live and newer (ExtendedStatusUpdateDecoder / StatusUpdateDecoder in the app).
 static uint8_t ObserveFrame(const uint8_t *f, size_t len, BOOL fromBuds) {
     uint8_t msgId = f[3];
     const uint8_t *pl = f + 4; size_t plen = len - 7;
+    if (fromBuds && msgId == MSG_EXTENDED_STATUS_UPDATED && plen > 17) {
+        // payload: revision, ear type, battery L, battery R, coupled, main side, placement, battery case, ...,
+        // noise mode at 12, color L (u16le) at 14, color R at 16
+        int colorL = pl[14] | (pl[15] << 8), colorR = pl[16] | (pl[17] << 8);
+        SetBattery(pl[2], pl[3], pl[7], colorR ? colorR : colorL);
+    }
+    else if (fromBuds && msgId == MSG_STATUS_UPDATED && plen > 6) SetBattery(pl[1], pl[2], pl[6], 0);
     if (fromBuds && msgId == MSG_EXTENDED_STATUS_UPDATED && plen > 12) SetNoiseMode(pl[12]);
     else if (fromBuds && msgId == MSG_NOISE_CONTROLS_UPDATE && plen >= 1) SetNoiseMode(pl[0]);
     else if (!fromBuds && msgId == MSG_NOISE_CONTROLS && plen >= 1) SetNoiseMode(pl[0]);
@@ -796,13 +822,18 @@ static int CmdServe(NSString *macArg, int channel, NSString *uuid, int port) {
 //                                 or "ERR <reason>\n" and close. Without MAC: the default device.
 //   NOISE                      -> "MODE <off|anc|ambient|adaptive>\n" (the current noise control mode), or "ERR <reason>\n"
 //   NOISE <mode>               -> sets it: "OK <mode>\n" or "ERR <reason>\n". mode: off, anc, ambient, adaptive (or 0-3)
+//   BATTERY                    -> "BATTERY <left> <right> <case> <color>\n" or "ERR <reason>\n". Percentages; 0 for an
+//                                 earbud that isn't connected, 0 or >100 for a case whose level isn't known. color is
+//                                 the buds' DeviceIds value (0 if unknown).
 //
 // Only one CONNECT session can be active at a time; others get "ERR busy". LIST and PING always work.
 // NOISE works either way: during a CONNECT session its frame is slipped into that session (and the client gets a
 // NOISE_CONTROLS_UPDATE frame, as if the buds had sent it); otherwise it opens a short session of its own.
+// BATTERY answers from the CONNECT session's frames, else from levels read in the last few seconds, else from a
+// short session (the buds send EXTENDED_STATUS_UPDATED as soon as the channel opens).
 
 static volatile int gBusy = 0;
-static volatile int gShortSession = 0;   // gBusy is held by a short NOISE session
+static volatile int gShortSession = 0;   // gBusy is held by a short NOISE or BATTERY session
 static NSString *gUUIDOverride;
 
 static BOOL ReadLine(int fd, char *out, size_t cap, int timeoutMs) {
@@ -839,6 +870,7 @@ static void HandleList(int cfd) {
 static void SetSessionActive(BOOL active) {
     pthread_mutex_lock(&gStateLock);
     gSessionActive = active; gSessionAligned = NO;
+    if (active) gSessionStart = Now();
     [gToBuds removeAllObjects]; [gToClient removeAllObjects];
     pthread_mutex_unlock(&gStateLock);
 }
@@ -891,8 +923,8 @@ static void ReadFrames(BBSession *s, BBFramer *frames, double seconds, BOOL *see
     }
 }
 
-// No app session: open the channel just long enough to read the status (it carries the noise mode) and, when
-// setting, send the mode. Called with gBusy held.
+// No app session: open the channel just long enough to read the status (it carries the noise mode and the battery
+// levels) and, when setting, send the mode. setMode -1 only reads the status. Called with gBusy held.
 static BOOL ShortNoiseSession(int setMode, NSString **error) {
     BBSession *s = [BBSession new];
     NSString *mac = nil;
@@ -984,6 +1016,43 @@ static void HandleNoise(int cfd, NSString *arg) {
     else WriteStr(cfd, [NSString stringWithFormat:@"%@ %@\n", verb, NoiseModeName(want >= 0 ? want : mode)]);
 }
 
+static void WriteBattery(int cfd) {
+    pthread_mutex_lock(&gStateLock);
+    NSString *line = [NSString stringWithFormat:@"BATTERY %d %d %d %d\n", gBattL, gBattR, gBattCase, gColor];
+    pthread_mutex_unlock(&gStateLock);
+    WriteStr(cfd, line);
+}
+
+static void HandleBattery(int cfd) {
+    double deadline = Now() + 8;
+    for (;;) {
+        pthread_mutex_lock(&gStateLock);
+        BOOL known = gBattL >= 0;
+        // The app is connected and the buds have reported in this session: its frames keep the levels current
+        BOOL fromSession = gSessionActive && known && gBattTime >= gSessionStart;
+        BOOL fresh = known && Now() - gBattTime < 10;
+        BOOL sessionStarting = gSessionActive;
+        pthread_mutex_unlock(&gStateLock);
+        if (fromSession || fresh) { WriteBattery(cfd); return; }
+        // A CONNECT session that hasn't heard from the buds yet will in a moment: wait for it
+        if (!sessionStarting && __sync_bool_compare_and_swap(&gBusy, 0, 1)) break;
+        if (Now() > deadline) {
+            WriteStr(cfd, sessionStarting ? @"ERR no status from the buds\n" : @"ERR busy\n");
+            return;
+        }
+        usleep(100 * 1000);
+    }
+
+    gShortSession = 1;
+    NSString *err = nil;
+    BBLog("battery: reading the status (short session)");
+    BOOL ok = ShortNoiseSession(-1, &err);
+    gShortSession = 0;
+    __sync_lock_release(&gBusy);
+    if (!ok) { BBLog("battery failed: %s", err.UTF8String ?: "?"); WriteStr(cfd, [NSString stringWithFormat:@"ERR %@\n", err]); }
+    else WriteBattery(cfd);
+}
+
 static void *ClientThread(void *arg) {
     int cfd = (int)(intptr_t)arg;
     @autoreleasepool {
@@ -1006,6 +1075,7 @@ static void *ClientThread(void *arg) {
                 else HandleConnect(cfd, mac, ch);
             }
             else if ([cmd isEqualToString:@"NOISE"]) HandleNoise(cfd, tok.count > 1 ? tok[1] : nil);
+            else if ([cmd isEqualToString:@"BATTERY"]) HandleBattery(cfd);
             else WriteStr(cfd, @"ERR unknown command\n");
         }
     }
@@ -1073,8 +1143,8 @@ static int CmdConfig(NSString *macArg, int channel, int port) {
     return 0;
 }
 
-// Ask the running daemon (noise control goes through it, so it also works while the app is connected).
-static int CmdNoise(NSString *mode, int port) {
+// Ask the running daemon (noise control and battery go through it, so they also work while the app is connected).
+static int CmdAsk(NSString *command, int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in sa = {.sin_len = sizeof sa, .sin_family = AF_INET, .sin_port = htons((uint16_t)port)};
     sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -1083,7 +1153,7 @@ static int CmdNoise(NSString *mode, int port) {
         close(fd);
         return 2;
     }
-    WriteStr(fd, mode ? [NSString stringWithFormat:@"NOISE %@\n", mode] : @"NOISE\n");
+    WriteStr(fd, [command stringByAppendingString:@"\n"]);
     char line[256];
     BOOL got = ReadLine(fd, line, sizeof line, 60000);
     close(fd);
@@ -1108,7 +1178,9 @@ static void Usage(void) {
         "  budsrfcomm [-v] daemon [-u uuid] [-p port]\n"
         "  budsrfcomm config [MAC] [-c channel] [-p port]\n"
         "  budsrfcomm forget\n"
-        "  budsrfcomm noise [off|anc|ambient|adaptive]\n\n"
+        "  budsrfcomm noise [off|anc|ambient|adaptive]\n"
+        "  budsrfcomm battery\n"
+        "  budsrfcomm popup     show the connection popup now (com.galaxybudsclient.noisecc >= 1.1.0)\n\n"
         "  MAC defaults to the remembered device, else the paired device named \"...Buds...\".\n"
         "  Channels that work are remembered per device in " BB_CONFIG_PATH ".\n"
         "  The package runs `budsrfcomm daemon` in the background (LaunchDaemon com.galaxybudsclient.budsrfcomm).\n\n"
@@ -1118,7 +1190,8 @@ static void Usage(void) {
         "  -t  seconds to listen (probe, default 15)\n"
         "  -p  TCP port for serve/daemon/config (default: remembered, else 8762)\n"
         "  -v  verbose (hex dumps of all traffic)\n\n"
-        "daemon protocol: send \"PING\", \"LIST\", \"CONNECT [MAC] [channel]\" or \"NOISE [mode]\" + newline; see README.\n");
+        "daemon protocol: send \"PING\", \"LIST\", \"CONNECT [MAC] [channel]\", \"NOISE [mode]\" or \"BATTERY\" + newline;\n"
+        "see README.\n");
 }
 
 static void OnStopSignal(int sig) { (void)sig; gStop = 1; }
@@ -1158,7 +1231,15 @@ int main(int argc, char **argv) {
         if ([cmd isEqualToString:@"config"]) return CmdConfig(mac, channel, port);
         if ([cmd isEqualToString:@"forget"]) return CmdForget();
         int listenPort = port ?: ConfigInt(LoadConfig(), @"Port") ?: BB_DEFAULT_PORT;
-        if ([cmd isEqualToString:@"noise"]) return CmdNoise(mac, listenPort);
+        if ([cmd isEqualToString:@"noise"]) return CmdAsk(mac ? [@"NOISE " stringByAppendingString:mac] : @"NOISE", listenPort);
+        if ([cmd isEqualToString:@"battery"]) return CmdAsk(@"BATTERY", listenPort);
+        if ([cmd isEqualToString:@"popup"]) {
+            // Picked up by the SpringBoard tweak (ccmodule/ConnectionPopup.m), which asks the daemon for the levels
+            uint32_t r = notify_post("com.galaxybudsclient.popup.show");
+            if (r != NOTIFY_STATUS_OK) { BBLog("notify_post failed: %u", r); return 2; }
+            printf("asked SpringBoard to show the popup\n");
+            return 0;
+        }
         if ([cmd isEqualToString:@"list"]) return CmdList();
         if ([cmd isEqualToString:@"daemon"]) { gUUIDOverride = uuid; return CmdDaemon(listenPort); }
         if ([cmd isEqualToString:@"probe"]) return CmdProbe(mac, channel, uuid, send, seconds);

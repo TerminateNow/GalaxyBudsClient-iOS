@@ -195,9 +195,16 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
 - **Window.** A `UIWindow` created with SpringBoard's first `UIWindowScene` (verified: the scene exists and the card shows),
   window level 1100 (status bar + 100, or the `PopupWindowLevel` setting), `-_canBecomeKeyWindow` NO, and `hitTest` passing
   touches outside the card through.
-  **Lock screen:** with only `-_setSecure:YES`, the card didn't show on the lock screen (2026-11-26). Now trying
-  `-_shouldCreateContextAsSecure` and `-_isSecure` overrides; `PopupDebug` logs the lock state and SpringBoard's visible
-  windows with their levels.
+  **Lock screen (2026-11-26):** a `UIWindow` subclass at level 1100 didn't show on the lock screen, with `-_setSecure:YES` or with
+  `-_shouldCreateContextAsSecure`/`-_isSecure` returning YES. The level isn't the problem: `SBCoverSheetWindow` is at 1050.
+  `PopupDebug` listed the visible windows while locked: `_SBWallpaperWindow` (1035), `SBCoverSheetWindow` (1050),
+  `SSScreenshotsWindow` (1115) and `SBRecordingIndicatorWindow` (1120); all but the screenshots window are
+  `SBSecureWindow : SBWindow : SBFWindow` subclasses, and all report `_isSecure` and `_shouldCreateContextAsSecure` as 1.
+  `SBSecureWindow` and `SBFWindow` declare no initializers; `SBWindow` has `initWithDebugName:`, `initWithFrame:`,
+  `initWithScreen:role:debugName:`, `initWithScreen:rootViewController:role:debugName:` and variants with `scene:` and
+  `layoutStrategy:`. The card's window is now a runtime subclass of `SBSecureWindow` made with `initWithDebugName:`
+  (and put in SpringBoard's scene if it has none); it falls back to the `UIWindow` subclass if that class is missing.
+  Whether that shows on the lock screen is being tested.
 - **Frontmost app.** `-[SpringBoard _accessibilityFrontMostApplication]` returns an `SBApplication` with `bundleIdentifier`.
   When it's `com.galaxybudsclient.ios`, the popup is left to the app.
 - **SF Symbols.** `battery.100/75/50/25/0` and `earbuds` are assumed to exist on iOS 15; missing ones fall back to

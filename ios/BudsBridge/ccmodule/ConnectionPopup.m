@@ -15,6 +15,8 @@
 // `budsrfcomm popup` shows the card for the connected Buds without reconnecting them (a Darwin notification).
 
 #import <UIKit/UIKit.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -222,14 +224,14 @@ static UIView *CaseColumn(int level) {
     return col;
 }
 
-static GBPopupWindow *gWindow;
+static UIWindow *gWindow;
 static UIView *gCard;
 static NSUInteger gGeneration;
 
 static void HideCard(void) {
     if (!gCard) return;
     UIView *card = gCard;
-    GBPopupWindow *window = gWindow;
+    UIWindow *window = gWindow;
     gCard = nil;
     NSUInteger generation = ++gGeneration;
     [UIView animateWithDuration:0.3 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
@@ -267,8 +269,69 @@ static void LogWindows(UIWindowScene *scene) {
     Class lsm = NSClassFromString(@"SBLockScreenManager");
     id manager = [lsm respondsToSelector:@selector(sharedInstance)] ? [lsm sharedInstance] : nil;
     GB_LOG(@"locked: %@", [manager respondsToSelector:@selector(isUILocked)] ? ([manager isUILocked] ? @"yes" : @"no") : @"unknown");
-    for (UIWindow *w in scene.windows)
-        if (!w.hidden) GB_LOG(@"window %@ level %.1f", NSStringFromClass(w.class), w.windowLevel);
+    static BOOL listed;
+    if (!listed) {
+        listed = YES;
+        unsigned n = 0;
+        Method *methods = class_copyMethodList(UIWindow.class, &n);
+        NSMutableArray *names = [NSMutableArray array];
+        for (unsigned i = 0; i < n; i++) {
+            NSString *name = NSStringFromSelector(method_getName(methods[i]));
+            if ([name rangeOfString:@"ecure" options:NSCaseInsensitiveSearch].location != NSNotFound) [names addObject:name];
+        }
+        free(methods);
+        GB_LOG(@"UIWindow secure methods: %@", [names componentsJoinedByString:@" "]);
+        for (NSString *cls in @[@"SBSecureWindow", @"SBWindow", @"SBFWindow"]) {
+            Class c = NSClassFromString(cls);
+            if (!c) { GB_LOG(@"%@: no such class", cls); continue; }
+            methods = class_copyMethodList(c, &n);
+            NSMutableArray *inits = [NSMutableArray array];
+            for (unsigned i = 0; i < n; i++) {
+                NSString *name = NSStringFromSelector(method_getName(methods[i]));
+                if ([name hasPrefix:@"init"] || [name hasPrefix:@"_init"]) [inits addObject:name];
+            }
+            free(methods);
+            GB_LOG(@"%@ initializers: %@", cls, [inits componentsJoinedByString:@" "]);
+        }
+    }
+    GB_LOG(@"popup window in scene.windows: %@", [scene.windows containsObject:gWindow] ? @"yes" : @"no");
+    for (UIWindow *w in scene.windows) {
+        if (w.hidden) continue;
+        NSMutableArray *chain = [NSMutableArray array];
+        for (Class c = w.class; c && c != UIWindow.class; c = class_getSuperclass(c)) [chain addObject:NSStringFromClass(c)];
+        NSMutableString *flags = [NSMutableString string];
+        for (NSString *sel in @[@"_isSecure", @"_shouldCreateContextAsSecure", @"_isSecureForRemoteViewService", @"_usesWindowServerHitTesting"]) {
+            SEL s = NSSelectorFromString(sel);
+            if ([w respondsToSelector:s]) [flags appendFormat:@" %@=%d", sel, ((BOOL (*)(id, SEL))objc_msgSend)(w, s)];
+        }
+        GB_LOG(@"window %@ level %.1f%@", [chain componentsJoinedByString:@":"], w.windowLevel, flags);
+    }
+}
+
+// The lock screen only shows SpringBoard's SBSecureWindow subclasses (the cover sheet, wallpaper and recording indicator
+// all are; a UIWindow reporting _isSecure isn't enough, seen on 15.8.8). SBSecureWindow only exists inside SpringBoard,
+// so the card's window class is made at runtime: SBSecureWindow with touches outside the card passing through.
+static Class SecureWindowClass(void) {
+    static Class cls;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class base = NSClassFromString(@"SBSecureWindow");
+        if (!base) return;
+        cls = objc_allocateClassPair(base, "GBSecurePopupWindow", 0);
+        if (!cls) { cls = NSClassFromString(@"GBSecurePopupWindow"); return; }
+        SEL hit = @selector(hitTest:withEvent:);
+        IMP superHit = class_getMethodImplementation(base, hit);
+        id hitBlock = ^UIView *(UIWindow *w, CGPoint p, UIEvent *e) {
+            UIView *v = ((UIView *(*)(id, SEL, CGPoint, UIEvent *))superHit)(w, hit, p, e);
+            return (v == w || v == w.rootViewController.view) ? nil : v;
+        };
+        class_addMethod(cls, hit, imp_implementationWithBlock(hitBlock),
+                        method_getTypeEncoding(class_getInstanceMethod(base, hit)));
+        class_addMethod(cls, NSSelectorFromString(@"_canBecomeKeyWindow"),
+                        imp_implementationWithBlock(^BOOL(id w) { return NO; }), "B@:");
+        objc_registerClassPair(cls);
+    });
+    return cls;
 }
 
 static UIWindowScene *SpringBoardScene(void) {
@@ -283,8 +346,17 @@ static void ShowCard(NSString *name, GBBattery b) {
 
     if (!gWindow) {
         UIWindowScene *scene = SpringBoardScene();
-        gWindow = scene ? [[GBPopupWindow alloc] initWithWindowScene:scene]
-                        : [[GBPopupWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+        Class secure = SecureWindowClass();
+        SEL initDebug = NSSelectorFromString(@"initWithDebugName:");
+        NSString *kind = @"SBSecureWindow";
+        if (secure && [secure instancesRespondToSelector:initDebug])
+            gWindow = ((id (*)(id, SEL, NSString *))objc_msgSend)([secure alloc], initDebug, @"GalaxyBudsPopup");
+        if (gWindow && !gWindow.windowScene && scene) gWindow.windowScene = scene;
+        if (!gWindow) {
+            kind = @"UIWindow";
+            gWindow = scene ? [[GBPopupWindow alloc] initWithWindowScene:scene]
+                            : [[GBPopupWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+        }
         gWindow.frame = UIScreen.mainScreen.bounds;
         id level = Config()[@"PopupWindowLevel"];
         gWindow.windowLevel = [level respondsToSelector:@selector(doubleValue)] ? [level doubleValue] : GB_WINDOW_LEVEL;
@@ -292,7 +364,7 @@ static void ShowCard(NSString *name, GBBattery b) {
         gWindow.rootViewController = [GBPopupController new];
         gWindow.rootViewController.view.backgroundColor = UIColor.clearColor;
         if ([gWindow respondsToSelector:@selector(_setSecure:)]) [gWindow _setSecure:YES];  // also on the lock screen
-        GB_LOG(@"window created (%@, level %.1f)", scene ? @"in SpringBoard's scene" : @"without a scene", gWindow.windowLevel);
+        GB_LOG(@"window created (%@, %@, level %.1f)", kind, gWindow.windowScene ? @"in a scene" : @"without a scene", gWindow.windowLevel);
     }
     if (ConfigBool(@"PopupDebug", NO)) LogWindows(gWindow.windowScene);
     gWindow.hidden = NO;

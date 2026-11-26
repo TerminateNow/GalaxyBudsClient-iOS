@@ -87,7 +87,7 @@ Both are built on Linux or WSL2, without Xcode:
   It uses CoreBluetooth's private `CBClassicManager`/`CBClassicPeer`/`CBRFCOMMChannel` and needs the entitlements in `entitlements.plist`.
   - **Background service:** `layout/Library/LaunchDaemons/com.galaxybudsclient.budsrfcomm.plist` runs `budsrfcomm daemon` as `mobile` on `127.0.0.1:8762`.
     The package's `postinst` loads it and restarts `bluetoothd`, so the tweak loads. `prerm` unloads it, and `postrm` restarts `bluetoothd` on removal.
-  - **Protocol, which is what the iOS app's `IBluetoothService` must speak:** one command line, either `PING`, `LIST`, `CONNECT [MAC] [channel]`, `NOISE [mode]`, `BATTERY` or `PREF <setting> [on|off]`.
+  - **Protocol, which is what the iOS app's `IBluetoothService` must speak:** one command line, either `PING`, `LIST`, `CONNECT [MAC] [channel]`, `NOISE [mode]`, `BATTERY`, `PREF <setting> [on|off]` or `POPUP`.
     `CONNECT` answers `OK <channel>` and then passes raw bytes in both directions. Only one `CONNECT` can be active, and others get `ERR busy`.
     `NOISE` (0.4.0) reads or sets the noise control mode. During a `CONNECT` session it slips a `0x78` frame in between the app's frames
     (the pump forwards client data frame by frame once the Buds have sent an `FD` frame) and sends the app a fake `0x77` update;
@@ -96,11 +96,12 @@ Both are built on Linux or WSL2, without Xcode:
     iOS has connected (`ERR not connected` otherwise, 0.5.1): connecting them there kept the service busy for up to a minute.
     iOS doesn't reconnect the Buds after a `bluetoothd` restart, so the service asks once, in the background, when it starts.
     `PREF` (0.5.1) reads or sets the popup's `Popup` and `BatteryNotification` settings for the sandboxed app, whose
-    Settings → Connection popup shows them as switches (`Platform/BudsBridgeSettings.cs`).
+    Settings → Connection popup shows them as switches (`Platform/BudsBridgeSettings.cs`); `POPUP` (0.5.2) shows the tweak's
+    card for the app's "Show demo popup".
     The protocol is specified in `ios/BudsBridge/README.md`.
 - **`ccmodule/`:** a CCSupport Control Center module (separate package `com.galaxybudsclient.noisecc`, `make package-cc`) that speaks `NOISE`.
   It subclasses ControlCenterUIKit's `CCUIMenuModuleViewController`. The private API it uses was read from the device's runtime and is listed in `research/NOTES.md`.
-  - The same package (1.1.1) ships the **connection popup**, `ConnectionPopup.m` → `GalaxyBudsPopup.dylib`, a SpringBoard-only tweak with no hooks.
+  - The same package (1.1.2) ships the **connection popup**, `ConnectionPopup.m` → `GalaxyBudsPopup.dylib`, a SpringBoard-only tweak with no hooks.
     On BluetoothManager's `BluetoothDeviceConnectSuccessNotification` for a "Buds" device it asks the daemon for `BATTERY` and slides
     a card over everything: its own window (a runtime subclass of `SBSecureWindow`), or, while the phone is locked, the
     `SBCoverSheetWindow` (no other SpringBoard window shows on the locked lock screen). Tap opens the app (through
@@ -196,9 +197,11 @@ section). `MainView` swaps the sidebar and breadcrumbs for an iOS navigation bar
 - Avalonia 12's `TopLevel.AutoSafeAreaPadding` (on by default) pads the main view by the safe area. `MainView` turns it off for
   the iPhone design because `ApplySafeArea` places the header itself; with both, the header sat a status bar too low. The harness
   has no insets manager, so it can't show this: call `ApplySafeArea` with `0,20,0,0` (iPhone 7) by reflection to preview the inset.
-- Connection popup: iOS has no extra windows, so `App.ShowPopup` calls `MainView.ShowConnectionBanner`, which slides
-  `Controls/IosConnectionBanner` (device name and `EarbudCompactStatusUnit`) down below the status bar for 4 s or until
-  tapped. Settings shows the popup section with `AllowIosDesign`, without Position. It only appears while the app runs.
+- Connection popup: on iOS the app shows no card of its own. The BudsBridge SpringBoard tweak shows one over other apps
+  and the lock screen and stays out of the way while the app is open, so `App.ShowPopup` only forwards "Show demo popup"
+  to it (`BudsBridgeSettings.ShowPopupAsync`, the service's `POPUP`). Settings shows the popup section with `AllowIosDesign`:
+  on iOS only the tweak's two switches and the demo, without the app's own switch, Compact mode or Position.
+  `Controls/IosConnectionBanner` (`MainView.ShowConnectionBanner`) is the in-app card for the iPhone design preview on a desktop.
 - `ToggleSwitch` moves `PART_MovingKnobs` by the width of `PART_SwitchKnob` when checked, so that canvas must be only as wide as
   the knob's travel (track 51 − knob 31 = 20). As wide as the track, the knob ends up out of sight when the switch is on.
 

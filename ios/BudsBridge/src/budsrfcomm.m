@@ -35,7 +35,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define BB_VERSION "0.5.1"
+#define BB_VERSION "0.5.2"
 #define BB_DEFAULT_PORT 8762
 #define BB_CONFIG_PATH "/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist"
 #define BB_MOBILE_UID 501
@@ -833,6 +833,8 @@ static int CmdServe(NSString *macArg, int channel, NSString *uuid, int port) {
 //   PREF <setting> [on|off]    -> "PREF <setting> <on|off>\n" or "ERR <reason>\n": reads or sets a setting of the
 //                                 noisecc package's SpringBoard tweak, kept in this service's settings file (the app is
 //                                 sandboxed and can't write it). Settings: Popup, BatteryNotification (default on).
+//   POPUP                      -> "OK\n": asks the SpringBoard tweak to show the connection popup now (the app's
+//                                 "Show demo popup"; same as `budsrfcomm popup`)
 //
 // Only one CONNECT session can be active at a time; others get "ERR busy". LIST and PING always work.
 // NOISE works either way: during a CONNECT session its frame is slipped into that session (and the client gets a
@@ -1124,6 +1126,10 @@ static void *ClientThread(void *arg) {
             else if ([cmd isEqualToString:@"NOISE"]) HandleNoise(cfd, tok.count > 1 ? tok[1] : nil);
             else if ([cmd isEqualToString:@"BATTERY"]) HandleBattery(cfd);
             else if ([cmd isEqualToString:@"PREF"]) HandlePref(cfd, tok);
+            else if ([cmd isEqualToString:@"POPUP"]) {
+                notify_post("com.galaxybudsclient.popup.show");
+                WriteStr(cfd, @"OK\n");
+            }
             else WriteStr(cfd, @"ERR unknown command\n");
         }
     }
@@ -1261,8 +1267,8 @@ static void Usage(void) {
         "  -t  seconds to listen (probe, default 15)\n"
         "  -p  TCP port for serve/daemon/config (default: remembered, else 8762)\n"
         "  -v  verbose (hex dumps of all traffic)\n\n"
-        "daemon protocol: send \"PING\", \"LIST\", \"CONNECT [MAC] [channel]\", \"NOISE [mode]\", \"BATTERY\" or\n"
-        "\"PREF <setting> [on|off]\" + newline; "
+        "daemon protocol: send \"PING\", \"LIST\", \"CONNECT [MAC] [channel]\", \"NOISE [mode]\", \"BATTERY\",\n"
+        "\"PREF <setting> [on|off]\" or \"POPUP\" + newline; "
         "see README.\n");
 }
 

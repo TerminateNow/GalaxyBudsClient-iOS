@@ -255,3 +255,7 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
 - So 0.5.1's short sessions (`NOISE`, `BATTERY`) fail at once with `ERR not connected` when the Buds aren't connected, a
   timed-out connect is cancelled (`cancelPeerConnection:`), and the service asks for the connection once, in the
   background, 5 s after it starts. Verified: after an install the Buds were back 23 s later, and `BATTERY` answered at once.
+- **Removing the battery notification** (noisecc 1.1.2): `withdrawBulletinRequestsWithRecordID:forSectionID:` doesn't remove
+  a bulletin published with `publishBulletin:destinations:` (turning the notification off left it in Notification Center).
+  The bulletin now has a fixed `bulletinID` and is removed with `withdrawBulletinID:` (the publisher-ID and record-ID
+  withdrawals are called too). Publishing again with the same IDs replaces it.

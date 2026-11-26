@@ -613,7 +613,9 @@ static void ShowCard(NSString *name, GBBattery b) {
 
 @interface NSObject (GBBulletinBoard)
 - (void)publishBulletin:(id)bulletin destinations:(unsigned long long)destinations;               // BBServer
+- (void)withdrawBulletinID:(NSString *)bulletinID;
 - (void)withdrawBulletinRequestsWithRecordID:(NSString *)recordID forSectionID:(NSString *)sectionID;
+- (void)withdrawBulletinRequestsWithPublisherBulletinID:(NSString *)publisherBulletinID forSectionID:(NSString *)sectionID;
 + (id)actionWithLaunchBundleID:(NSString *)bundleID callblock:(id)callblock;                        // BBAction
 @end
 
@@ -689,7 +691,9 @@ static void PostBatteryNotification(NSString *name, GBBattery b) {
         NSDictionary *fields = @{
             @"title": title, @"message": message,
             @"sectionID": GB_APP_BUNDLE_ID, @"recordID": GB_BULLETIN_RECORD_ID,
-            @"publisherBulletinID": GB_BULLETIN_RECORD_ID, @"bulletinID": NSUUID.UUID.UUIDString,
+            // A fixed bulletin ID: withdrawing by record ID doesn't remove a bulletin published this way (15.8.8),
+            // withdrawBulletinID: does. Publishing the same IDs again replaces it.
+            @"publisherBulletinID": GB_BULLETIN_RECORD_ID, @"bulletinID": GB_BULLETIN_RECORD_ID,
             @"threadID": GB_BULLETIN_RECORD_ID, @"date": now, @"publicationDate": now,
         };
         for (NSString *key in fields) [bulletin setValue:fields[key] forKey:key];
@@ -727,7 +731,17 @@ static void PostBatteryNotification(NSString *name, GBBattery b) {
 static void RemoveBatteryNotification(void) {
     if (!gBBServer) return;
     OnBulletinQueue(^(id server) {
+        NSMutableArray *used = [NSMutableArray array];
+        if ([server respondsToSelector:@selector(withdrawBulletinID:)]) {
+            [server withdrawBulletinID:GB_BULLETIN_RECORD_ID];
+            [used addObject:@"withdrawBulletinID:"];
+        }
+        if ([server respondsToSelector:@selector(withdrawBulletinRequestsWithPublisherBulletinID:forSectionID:)]) {
+            [server withdrawBulletinRequestsWithPublisherBulletinID:GB_BULLETIN_RECORD_ID forSectionID:GB_APP_BUNDLE_ID];
+            [used addObject:@"publisherBulletinID"];
+        }
         [server withdrawBulletinRequestsWithRecordID:GB_BULLETIN_RECORD_ID forSectionID:GB_APP_BUNDLE_ID];
+        GB_LOG(@"battery notification withdrawn (%@)", [used componentsJoinedByString:@", "]);
     });
 }
 

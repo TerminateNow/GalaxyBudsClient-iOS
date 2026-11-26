@@ -210,7 +210,17 @@ public class App : Application
         if (_popupShown && !noDebounce)
             return;
 
-        // iOS design: no extra windows, so the popup is a card at the top of the main view
+        // iOS: the BudsBridge SpringBoard tweak shows the popup over other apps and the lock screen, and stays out of
+        // the way while this app is open, where the battery levels are on screen anyway. So no card of the app's own:
+        // "Show demo popup" asks the tweak for its card instead.
+        if (PlatformUtils.IsIOS)
+        {
+            if (noDebounce)
+                _ = BudsBridgeSettings.ShowPopupAsync();
+            return;
+        }
+
+        // iOS design preview on a desktop (GBC_IOS_DESIGN=1): no extra windows, so the popup is a card at the top of the main view
         if (PlatformUtils.UseIosDesign && MainView.Instance?.ShowConnectionBanner() == true)
         {
             _popupShown = true;

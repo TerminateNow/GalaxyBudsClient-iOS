@@ -27,11 +27,11 @@ battery levels over any app or the lock screen when the Buds connect (see [Contr
 
 ## Install
 
-1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.5.1_iphoneos-arm64.deb` to the phone.
+1. Copy `dist/com.galaxybudsclient.budsrfcomm_0.5.2_iphoneos-arm64.deb` to the phone.
 2. Install it with Filza or Sileo, or over SSH:
 
    ```bash
-   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.5.1_iphoneos-arm64.deb
+   sudo dpkg -i com.galaxybudsclient.budsrfcomm_0.5.2_iphoneos-arm64.deb
    ```
 
    The install restarts `bluetoothd` so it loads the tweak (Bluetooth drops for a few seconds, then reconnects),
@@ -80,6 +80,7 @@ A client connects to `127.0.0.1:8762` and sends one command line ending in `\n`:
 | `NOISE` | `MODE <off\|anc\|ambient\|adaptive>`: the current noise control mode. On failure: `ERR <reason>`. (0.4.0) |
 | `NOISE <mode>` | Sets the mode (`off`, `anc`, `ambient`, `adaptive`, or `0`–`3`) and answers `OK <mode>`, or `ERR <reason>`. (0.4.0) |
 | `PREF <setting> [on\|off]` | Reads or sets a setting of the connection popup (`Popup`, `BatteryNotification`; both on by default) and answers `PREF <setting> <on\|off>`, or `ERR <reason>`. The app's settings use it, because the sandboxed app can't write the settings file. A change takes effect in SpringBoard right away. (0.5.1) |
+| `POPUP` | `OK`: asks the SpringBoard tweak to show the connection popup now (the app's "Show demo popup", like `budsrfcomm popup`). (0.5.2) |
 | `BATTERY` | `BATTERY <left> <right> <case> <color>`: battery levels in percent, and the Buds' color ID (the app's `DeviceIds`, `0` if unknown). An earbud that isn't connected reads `0`; a case whose level isn't known reads `0` or more than `100`. On failure: `ERR <reason>`. (0.5.0) |
 
 - Only one `CONNECT` can be active at a time. A second one gets `ERR busy`. `PING`, `LIST`, `NOISE`, `BATTERY` and `PREF` always work.
@@ -167,7 +168,7 @@ whether or not the app is open.
 Install it after the bridge, then respring and add it in **Settings → Control Center**:
 
 ```bash
-sudo dpkg -i com.galaxybudsclient.noisecc_1.1.1_iphoneos-arm64.deb
+sudo dpkg -i com.galaxybudsclient.noisecc_1.1.2_iphoneos-arm64.deb
 ```
 
 ```bash
@@ -204,7 +205,8 @@ Buds3 Pro show their own photos (Silver and White); other models show a generic 
 - Each connection posts the notification once per Bluetooth profile (three times within a second on the iPhone 7), so the
   same Buds are ignored for 5 seconds after a card.
 - The app's **Settings → Connection popup** has switches for the popup over other apps and for the battery notification
-  (they use the service's `PREF` command).
+  (they use the service's `PREF` command), and "Show demo popup" (the `POPUP` command). On iOS the app shows no card of its
+  own: this one stays out of the way while the app is open.
 - Settings, in the service's settings file `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`:
   `Popup` (Boolean, `NO` turns the card off), `BatteryNotification` (Boolean, `NO` turns the notification off), `PopupDebug` (Boolean, `YES` logs every Bluetooth notification SpringBoard sees,
   and SpringBoard's windows with their levels each time the card shows) and `PopupWindowLevel` (Real, default `1100`).

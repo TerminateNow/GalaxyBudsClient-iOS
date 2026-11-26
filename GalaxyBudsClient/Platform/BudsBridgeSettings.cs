@@ -12,7 +12,8 @@ namespace GalaxyBudsClient.Platform;
 /// iOS: settings of the BudsBridge SpringBoard tweak (package com.galaxybudsclient.noisecc): the battery popup over other
 /// apps and the lock screen, and the battery notification. They live in the BudsBridge service's settings file, which the
 /// sandboxed app can't write, so they're read and set with the service's <c>PREF &lt;setting&gt; [on|off]</c> command
-/// (budsrfcomm 0.5.1 and newer). The service tells the tweak about a change right away.
+/// (budsrfcomm 0.5.1 and newer). The service tells the tweak about a change right away. <c>POPUP</c> (0.5.2) shows the
+/// tweak's popup, for the app's "Show demo popup".
 /// </summary>
 public static class BudsBridgeSettings
 {
@@ -30,7 +31,19 @@ public static class BudsBridgeSettings
     /// <returns>The setting as the service saved it, or null if that failed.</returns>
     public static Task<bool?> SetAsync(string setting, bool on) => RequestAsync($"PREF {setting} {(on ? "on" : "off")}");
 
+    /// <summary>Asks the SpringBoard tweak to show its popup now (the service's <c>POPUP</c> command, 0.5.2).</summary>
+    public static async Task<bool> ShowPopupAsync() => await SendAsync("POPUP") == "OK";
+
     private static async Task<bool?> RequestAsync(string command)
+    {
+        // "PREF <setting> <on|off>", else "ERR <reason>"
+        var parts = (await SendAsync(command))?.Split(' ');
+        if (parts is { Length: 3 } && parts[0] == "PREF")
+            return parts[2] == "on";
+        return null;
+    }
+
+    private static async Task<string?> SendAsync(string command)
     {
         try
         {
@@ -41,12 +54,9 @@ public static class BudsBridgeSettings
             await stream.WriteAsync(Encoding.UTF8.GetBytes(command + "\n"), cancel.Token);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var reply = await reader.ReadLineAsync(cancel.Token);
-
-            // "PREF <setting> <on|off>", else "ERR <reason>"
-            var parts = reply?.Split(' ');
-            if (parts is { Length: 3 } && parts[0] == "PREF")
-                return parts[2] == "on";
-            Log.Warning("BudsBridgeSettings: {Command}: {Reply}", command, reply ?? "no answer");
+            if (reply == null || reply.StartsWith("ERR"))
+                Log.Warning("BudsBridgeSettings: {Command}: {Reply}", command, reply ?? "no answer");
+            return reply;
         }
         catch (Exception ex)
         {

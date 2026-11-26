@@ -207,9 +207,19 @@ public class App : Application
     
     private void ShowPopup(bool noDebounce = false)
     {
-        if (!PlatformUtils.IsDesktop || (_popupShown && !noDebounce))
+        if (_popupShown && !noDebounce)
             return;
-        
+
+        // iOS design: no extra windows, so the popup is a card at the top of the main view
+        if (PlatformUtils.UseIosDesign && MainView.Instance?.ShowConnectionBanner() == true)
+        {
+            _popupShown = true;
+            return;
+        }
+
+        if (!PlatformUtils.IsDesktop)
+            return;
+
         if (_popup is { IsVisible: true })
         {
             _popup.UpdateSettings();

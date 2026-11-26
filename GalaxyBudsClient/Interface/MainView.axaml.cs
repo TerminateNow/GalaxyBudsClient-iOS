@@ -19,6 +19,7 @@ using FluentAvalonia.UI.Navigation;
 using FluentAvalonia.UI.Windowing;
 using FluentIcons.Common;
 using GalaxyBudsClient.Generated.I18N;
+using GalaxyBudsClient.Interface.Controls;
 using GalaxyBudsClient.Interface.Dialogs;
 using GalaxyBudsClient.Interface.Services;
 using GalaxyBudsClient.Interface.ViewModels;
@@ -484,6 +485,10 @@ public partial class MainView : UserControl
         DisconnectedInfoBar[!IsVisibleProperty] = DisconnectedInfoBar[!FAInfoBar.IsOpenProperty];
         DisconnectedInfoBar[!BackgroundProperty] = DisconnectedInfoBar.GetResourceObservable("IosBannerBrush").ToBinding();
         DisconnectedInfoBar.Effect = new DropShadowEffect { BlurRadius = 16, OffsetY = 2, Color = Color.Parse("#80000000") };
+        // The connection popup: a card that slides down over the header (App.ShowPopup)
+        _connectionBanner = new IosConnectionBanner { ZIndex = 20, Margin = new Thickness(10, 6, 10, 0) };
+        Grid.SetRowSpan(_connectionBanner, 4);
+        ContentContainer.Children.Add(_connectionBanner);
         // ApplySafeArea places the header and content itself. Avalonia's automatic safe area padding (on by default)
         // would inset the whole view by the status bar a second time, leaving a gap above the header.
         TopLevel.SetAutoSafeAreaPadding(this, false);
@@ -502,6 +507,22 @@ public partial class MainView : UserControl
         // Keep the navigation bar below the status bar and the content above the home indicator
         IosNavBar.Margin = new Thickness(padding.Left + 8, padding.Top, padding.Right + 8, 0);
         ContentContainer.Margin = new Thickness(0, 0, 0, padding.Bottom);
+        if (_connectionBanner != null)
+            _connectionBanner.Margin = new Thickness(padding.Left + 10, padding.Top + 6, padding.Right + 10, 0);
+    }
+
+    private IosConnectionBanner? _connectionBanner;
+
+    /// <summary>
+    /// iOS design: shows the connection popup card with the battery levels. False if there's no card
+    /// (not the iOS design).
+    /// </summary>
+    public bool ShowConnectionBanner()
+    {
+        if (_connectionBanner == null)
+            return false;
+        _connectionBanner.Show();
+        return true;
     }
 
     private static string ResolveTitle(PageViewModelBase? page)

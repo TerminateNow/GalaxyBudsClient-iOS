@@ -177,9 +177,9 @@
                 </ui:FASettingsExpander.IconSource>
 
                 <Interaction.Behaviors>
-                    <ext:RequiresDesktopBehavior />
+                    <ext:RequiresDesktopBehavior AllowIosDesign="True" />
                 </Interaction.Behaviors>
-                
+
                 <controls:SettingsSwitchItem
                     Content="{ext:Translate {x:Static i18N:Keys.SettingsCpopupEnable}}"
                     Description="{ext:Translate {x:Static i18N:Keys.SettingsCpopupEnableDescription}}"
@@ -199,6 +199,8 @@
                                                SelectedValue="{Binding PopupPlacement, Source={x:Static config:Settings.Data}}">
                     <Interaction.Behaviors>
                         <ext:LocalizationAwareComboBoxBehavior />
+                        <!-- Screen corners only mean something on a desktop: the iOS card is always at the top -->
+                        <ext:RequiresDesktopBehavior />
                     </Interaction.Behaviors>
                 </controls:SettingsComboBoxItem>
 

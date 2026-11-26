@@ -177,6 +177,9 @@ section). `MainView` swaps the sidebar and breadcrumbs for an iOS navigation bar
 - Avalonia 12's `TopLevel.AutoSafeAreaPadding` (on by default) pads the main view by the safe area. `MainView` turns it off for
   the iPhone design because `ApplySafeArea` places the header itself; with both, the header sat a status bar too low. The harness
   has no insets manager, so it can't show this: call `ApplySafeArea` with `0,20,0,0` (iPhone 7) by reflection to preview the inset.
+- Connection popup: iOS has no extra windows, so `App.ShowPopup` calls `MainView.ShowConnectionBanner`, which slides
+  `Controls/IosConnectionBanner` (device name and `EarbudCompactStatusUnit`) down below the status bar for 4 s or until
+  tapped. Settings shows the popup section with `AllowIosDesign`, without Position. It only appears while the app runs.
 - `ToggleSwitch` moves `PART_MovingKnobs` by the width of `PART_SwitchKnob` when checked, so that canvas must be only as wide as
   the knob's travel (track 51 − knob 31 = 20). As wide as the track, the knob ends up out of sight when the switch is on.
 

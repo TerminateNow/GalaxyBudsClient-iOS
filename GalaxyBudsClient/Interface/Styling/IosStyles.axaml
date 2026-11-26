@@ -1,0 +1,366 @@
+<!--
+    iOS design (PlatformUtils.UseIosDesign): grouped inset lists like the iOS Settings app.
+    Added on top of AppStyles by App.Initialize, so everything here overrides the desktop look.
+-->
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:controls="clr-namespace:GalaxyBudsClient.Interface.Controls"
+        xmlns:conv="clr-namespace:GalaxyBudsClient.Interface.Converters">
+
+    <Styles.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="IosBackgroundBrush" Color="#000000" />
+                    <SolidColorBrush x:Key="IosSurfaceBrush" Color="#1C1C1E" />
+                    <SolidColorBrush x:Key="IosSurface2Brush" Color="#2C2C2E" />
+                    <SolidColorBrush x:Key="IosPressedBrush" Color="#3A3A3C" />
+                    <SolidColorBrush x:Key="IosSeparatorBrush" Color="#A6545458" />
+                    <SolidColorBrush x:Key="IosTextBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="IosSecondaryTextBrush" Color="#9EEBEBF5" />
+                    <SolidColorBrush x:Key="IosChevronBrush" Color="#52EBEBF5" />
+                    <SolidColorBrush x:Key="IosTrackBrush" Color="#3A3A3C" />
+                    <SolidColorBrush x:Key="IosSwitchOffBrush" Color="#39393D" />
+                    <SolidColorBrush x:Key="IosNavBarBrush" Color="#D1000000" />
+                    <SolidColorBrush x:Key="IosBannerBrush" Color="#3A3220" />
+                    <SolidColorBrush x:Key="IosPopupBrush" Color="#2C2C2E" />
+                    <!-- FluentAvalonia surfaces that should blend into the iOS background -->
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#000000" />
+                    <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#1C1C1E" />
+                    <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#1C1C1E" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="IosBackgroundBrush" Color="#F2F2F7" />
+                    <SolidColorBrush x:Key="IosSurfaceBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="IosSurface2Brush" Color="#EBEBF0" />
+                    <SolidColorBrush x:Key="IosPressedBrush" Color="#D1D1D6" />
+                    <SolidColorBrush x:Key="IosSeparatorBrush" Color="#4A3C3C43" />
+                    <SolidColorBrush x:Key="IosTextBrush" Color="#000000" />
+                    <SolidColorBrush x:Key="IosSecondaryTextBrush" Color="#C73C3C43" />
+                    <SolidColorBrush x:Key="IosChevronBrush" Color="#593C3C43" />
+                    <SolidColorBrush x:Key="IosTrackBrush" Color="#E3E3E8" />
+                    <SolidColorBrush x:Key="IosSwitchOffBrush" Color="#E9E9EA" />
+                    <SolidColorBrush x:Key="IosNavBarBrush" Color="#D9F2F2F7" />
+                    <SolidColorBrush x:Key="IosBannerBrush" Color="#FFF4CE" />
+                    <SolidColorBrush x:Key="IosPopupBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#F2F2F7" />
+                    <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FFFFFF" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <SolidColorBrush x:Key="IosGreenBrush" Color="#30D158" />
+            <SolidColorBrush x:Key="IosRedBrush" Color="#FF453A" />
+            <SolidColorBrush x:Key="IosOrangeBrush" Color="#FF9F0A" />
+
+            <!-- A group of rows: one rounded card, rows separated by inset hairlines -->
+            <ControlTheme x:Key="{x:Type controls:SettingsGroup}" TargetType="controls:SettingsGroup">
+                <Setter Property="Background" Value="{DynamicResource IosSurfaceBrush}" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="Margin" Value="0,0,0,20" />
+                <Setter Property="ItemsPanel">
+                    <ItemsPanelTemplate>
+                        <StackPanel />
+                    </ItemsPanelTemplate>
+                </Setter>
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="Border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="{TemplateBinding CornerRadius}"
+                                ClipToBounds="True">
+                            <ItemsPresenter ItemsPanel="{TemplateBinding ItemsPanel}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- A row: colored icon tile, title and description, value or control, chevron -->
+            <ControlTheme x:Key="{x:Type ui:FASettingsExpanderItem}" TargetType="ui:FASettingsExpanderItem">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{DynamicResource IosTextBrush}" />
+                <Setter Property="MinHeight" Value="44" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="Root"
+                                Background="{TemplateBinding Background}"
+                                MinHeight="{TemplateBinding MinHeight}"
+                                Padding="16,0,0,0">
+                            <Grid ColumnDefinitions="Auto,*">
+                                <Border Name="IconTile"
+                                        Width="29" Height="29"
+                                        CornerRadius="7"
+                                        Margin="0,0,12,0"
+                                        VerticalAlignment="Center"
+                                        IsVisible="{TemplateBinding IconSource, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                        Background="{TemplateBinding IconSource, Converter={x:Static conv:IosIconTileConverter.Instance}}">
+                                    <Viewbox Name="IconHost" Width="18" Height="18">
+                                        <ui:FAIconSourceElement Name="IconPresenter"
+                                                                IconSource="{TemplateBinding IconSource}"
+                                                                Foreground="White" />
+                                    </Viewbox>
+                                </Border>
+                                <Border Grid.Column="1"
+                                        Name="Separator"
+                                        BorderThickness="0,0,0,0.5"
+                                        BorderBrush="{DynamicResource IosSeparatorBrush}"
+                                        Padding="0,11,16,11">
+                                    <Grid Name="RowGrid" ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto">
+                                        <StackPanel Name="HeaderRegion" VerticalAlignment="Center" Spacing="2">
+                                            <ContentPresenter Name="ContentPresenter"
+                                                              Content="{TemplateBinding Content}"
+                                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                              FontSize="16"
+                                                              TextWrapping="Wrap" />
+                                            <TextBlock Name="DescriptionText"
+                                                       Text="{TemplateBinding Description}"
+                                                       IsVisible="{TemplateBinding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                                       FontSize="13"
+                                                       LineHeight="17"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource IosSecondaryTextBrush}" />
+                                        </StackPanel>
+                                        <ContentPresenter Grid.Column="1"
+                                                          Name="FooterPresenter"
+                                                          Content="{TemplateBinding Footer}"
+                                                          ContentTemplate="{TemplateBinding FooterTemplate}"
+                                                          VerticalAlignment="Center"
+                                                          Margin="12,0,0,0" />
+                                        <Viewbox Grid.Column="2"
+                                                 Name="ActionIconHost"
+                                                 Width="14" Height="14"
+                                                 Margin="10,0,0,0"
+                                                 VerticalAlignment="Center"
+                                                 IsVisible="{TemplateBinding ActionIconSource, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                            <ui:FAIconSourceElement Name="ExpandChevronActionIconContainer"
+                                                                    IconSource="{TemplateBinding ActionIconSource}"
+                                                                    Foreground="{DynamicResource IosChevronBrush}" />
+                                        </Viewbox>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+
+                <Style Selector="^:allowClick:pressed /template/ Border#Root">
+                    <Setter Property="Background" Value="{DynamicResource IosPressedBrush}" />
+                </Style>
+                <Style Selector="^:disabled">
+                    <Setter Property="Opacity" Value="0.4" />
+                </Style>
+                <Style Selector="^.Last /template/ Border#Separator">
+                    <Setter Property="BorderThickness" Value="0" />
+                </Style>
+                <Style Selector="^.SingleItem /template/ Border#Separator">
+                    <Setter Property="BorderThickness" Value="0" />
+                </Style>
+            </ControlTheme>
+
+            <!-- A titled section (Settings page): header text above a card of rows, always open -->
+            <ControlTheme x:Key="{x:Type ui:FASettingsExpander}" TargetType="ui:FASettingsExpander">
+                <Setter Property="Margin" Value="0,0,0,20" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <StackPanel Spacing="6">
+                            <!-- Template parts the control looks up; not shown in this design -->
+                            <Expander Name="Expander" Height="0" MinHeight="0" Margin="0,-6,0,0" Opacity="0" IsHitTestVisible="False" IsExpanded="True">
+                                <Expander.Template>
+                                    <ControlTemplate>
+                                        <ToggleButton Name="ToggleButton" />
+                                    </ControlTemplate>
+                                </Expander.Template>
+                            </Expander>
+                            <ui:FASettingsExpanderItem Name="ContentHost" Height="0" MinHeight="0" Margin="0,-6,0,0" Opacity="0" IsHitTestVisible="False" />
+
+                            <TextBlock Name="SectionHeader"
+                                       Margin="16,0,16,0"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource IosSecondaryTextBrush}"
+                                       Text="{Binding Header, RelativeSource={RelativeSource TemplatedParent}, Converter={x:Static conv:IosUpperCaseConverter.Instance}}" />
+                            <Border Background="{DynamicResource IosSurfaceBrush}"
+                                    CornerRadius="12"
+                                    ClipToBounds="True">
+                                <ItemsPresenter ItemsPanel="{TemplateBinding ItemsPanel}" />
+                            </Border>
+                        </StackPanel>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- iOS switch -->
+            <ControlTheme x:Key="{x:Type ToggleSwitch}" TargetType="ToggleSwitch">
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="SwitchTrack"
+                                Width="51" Height="31"
+                                CornerRadius="15.5"
+                                Background="{DynamicResource IosSwitchOffBrush}">
+                            <Border.Transitions>
+                                <Transitions>
+                                    <BrushTransition Property="Background" Duration="0:0:0.2" />
+                                </Transitions>
+                            </Border.Transitions>
+                            <!-- ToggleSwitch moves PART_MovingKnobs by PART_SwitchKnob's width when checked (and clamps
+                                 dragging to it), so this canvas is only as wide as the knob's travel: track 51 - knob 31.
+                                 A canvas as wide as the track pushed the knob out of sight when the switch was on. -->
+                            <Canvas Name="PART_SwitchKnob" Width="20" Height="31" HorizontalAlignment="Left">
+                                <Panel Name="PART_MovingKnobs" Width="31" Height="31" Canvas.Left="0">
+                                    <Panel.Transitions>
+                                        <Transitions>
+                                            <DoubleTransition Property="Canvas.Left" Duration="0:0:0.2" Easing="CubicEaseOut" />
+                                        </Transitions>
+                                    </Panel.Transitions>
+                                    <Border Name="SwitchKnob"
+                                            Width="27" Height="27"
+                                            CornerRadius="13.5"
+                                            Background="White"
+                                            BoxShadow="0 2 6 0 #40000000" />
+                                </Panel>
+                            </Canvas>
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+                <Style Selector="^:checked /template/ Border#SwitchTrack">
+                    <Setter Property="Background" Value="{StaticResource IosGreenBrush}" />
+                </Style>
+                <Style Selector="^:checked /template/ Panel#PART_MovingKnobs">
+                    <Setter Property="Canvas.Left" Value="20" />
+                </Style>
+            </ControlTheme>
+        </ResourceDictionary>
+    </Styles.Resources>
+
+    <!-- Groups whose rows are all hidden: also cancel the page's item spacing -->
+    <Style Selector="controls|SettingsGroup.Empty">
+        <Setter Property="Margin" Value="0,-8,0,0" />
+        <Setter Property="Height" Value="0" />
+    </Style>
+
+    <!-- Settings page: app name and version as a card -->
+    <Style Selector="Border.AppHeaderCard">
+        <Setter Property="Background" Value="{DynamicResource IosSurfaceBrush}" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Padding" Value="16,18" />
+        <Setter Property="Margin" Value="0,0,0,20" />
+    </Style>
+    <Style Selector="Border.AppHeaderCard Image">
+        <Setter Property="Height" Value="60" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.AppHeaderCard TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+    </Style>
+    <Style Selector="Border.AppHeaderCard StackPanel > TextBlock:nth-child(1)">
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource IosTextBrush}" />
+    </Style>
+
+    <!-- Header above a group of rows -->
+    <Style Selector="TextBlock.IosSectionHeader">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Margin" Value="16,0,16,6" />
+        <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+    </Style>
+    <!-- Value shown on the right of a row, before the chevron -->
+    <Style Selector="TextBlock.IosRowValue">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="MaxWidth" Value="130" />
+        <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+    </Style>
+
+    <!-- Navigation bar buttons: plain accent-colored text and icons -->
+    <Style Selector="Button.IosNavButton">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{DynamicResource IosAccentBrush}" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="MinHeight" Value="44" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.IosNavButton:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource IosAccentBrush}" />
+    </Style>
+    <Style Selector="Button.IosNavButton:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource IosAccentBrush}" />
+        <Setter Property="Opacity" Value="0.5" />
+    </Style>
+
+    <!-- iOS slider: thin accent track, round white knob -->
+    <Style Selector="Slider:horizontal">
+        <Setter Property="MinHeight" Value="32" />
+    </Style>
+    <Style Selector="Slider /template/ RepeatButton#PART_DecreaseButton">
+        <Setter Property="Background" Value="{DynamicResource IosAccentBrush}" />
+    </Style>
+    <Style Selector="Slider /template/ RepeatButton#PART_IncreaseButton">
+        <Setter Property="Background" Value="{DynamicResource IosTrackBrush}" />
+    </Style>
+    <Style Selector="Slider /template/ Thumb#thumb">
+        <Setter Property="Width" Value="26" />
+        <Setter Property="Height" Value="26" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Width="26" Height="26" CornerRadius="13" Background="White"
+                        BoxShadow="0 1 4 0 #4D000000" />
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <!-- Info bars become plain cards -->
+    <Style Selector="ui|FAInfoBar">
+        <Setter Property="CornerRadius" Value="12" />
+    </Style>
+
+    <!-- Choices inside rows: text and a chevron, no box -->
+    <Style Selector="ui|FASettingsExpanderItem ui|FAComboBox">
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="MaxWidth" Value="180" />
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="Foreground" Value="{DynamicResource IosSecondaryTextBrush}" />
+    </Style>
+    <Style Selector="ui|FASettingsExpanderItem ui|FAComboBox /template/ Border#Background">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="ui|FASettingsExpanderItem ui|FAComboBox /template/ Border#HighlightBackground">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="ui|FASettingsExpanderItem ui|FAComboBox /template/ Rectangle#Pill">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+
+    <!-- Sliders sit on their own line under the title -->
+    <Style Selector="ui|FASettingsExpanderItem.ComboItem /template/ ContentPresenter#FooterPresenter">
+        <Setter Property="MaxWidth" Value="150" />
+    </Style>
+    <Style Selector="ui|FASettingsExpanderItem ui|FAComboBox">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="4,0,0,0" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+    <Style Selector="ui|FASettingsExpanderItem.SliderItem /template/ Border#IconTile">
+        <Setter Property="VerticalAlignment" Value="Top" />
+        <Setter Property="Margin" Value="0,9,12,0" />
+    </Style>
+    <Style Selector="ui|FASettingsExpanderItem.SliderItem /template/ ContentPresenter#FooterPresenter">
+        <Setter Property="Grid.Row" Value="1" />
+        <Setter Property="Grid.Column" Value="0" />
+        <Setter Property="Grid.ColumnSpan" Value="3" />
+        <Setter Property="Margin" Value="0,6,0,0" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
+</Styles>

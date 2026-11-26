@@ -19,6 +19,18 @@ public class RequiresDesktopBehavior : Behavior<Control>
         get => GetValue(NotProperty);
         set => SetValue(NotProperty, value);
     }
+
+    public static readonly StyledProperty<bool> AllowIosDesignProperty =
+        AvaloniaProperty.Register<RequiresDesktopBehavior, bool>(nameof(AllowIosDesign));
+
+    /// <summary>
+    /// Also show the control with the iOS design (<see cref="PlatformUtils.UseIosDesign"/>).
+    /// </summary>
+    public bool AllowIosDesign
+    {
+        get => GetValue(AllowIosDesignProperty);
+        set => SetValue(AllowIosDesignProperty, value);
+    }
     
     /// <inheritdoc />
     protected override void OnAttachedToVisualTree()
@@ -26,8 +38,9 @@ public class RequiresDesktopBehavior : Behavior<Control>
         UpdateState();
     }
 
-    private bool State => (PlatformUtils.IsDesktop && !Not) ||
-                          (!PlatformUtils.IsDesktop && Not);
+    private bool IsDesktopLike => PlatformUtils.IsDesktop || (AllowIosDesign && PlatformUtils.UseIosDesign);
+    private bool State => (IsDesktopLike && !Not) ||
+                          (!IsDesktopLike && Not);
     protected void UpdateState()
     {
         Dispatcher.UIThread.Post(() =>

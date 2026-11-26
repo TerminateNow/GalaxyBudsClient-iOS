@@ -11,6 +11,7 @@ using GalaxyBudsClient.Model;
 using GalaxyBudsClient.Model.Constants;
 using GalaxyBudsClient.Model.Specifications;
 using GalaxyBudsClient.Platform;
+using ReactiveUI;
 
 namespace GalaxyBudsClient.Interface.ViewModels.Pages;
 
@@ -103,6 +104,9 @@ public partial class NoiseControlPageViewModel : MainPageViewModelBase
 
     private async void OnPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (args.PropertyName is nameof(IsAmbientSoundEnabled) or nameof(IsAncEnabled))
+            this.RaisePropertyChanged(nameof(NoiseControlMode));
+
         if (_suppressorCounter > 0)
             return;
         
@@ -143,7 +147,7 @@ public partial class NoiseControlPageViewModel : MainPageViewModelBase
             ? NoiseControlModes.NoiseReduction
             : NoiseControlModes.Off;
     
-    private void SetNoiseControlMode(NoiseControlModes mode)
+    public void SetNoiseControlMode(NoiseControlModes mode)
     {
         switch (mode)
         {

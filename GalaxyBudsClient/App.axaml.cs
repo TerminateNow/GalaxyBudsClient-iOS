@@ -14,11 +14,13 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Threading;
 using FluentAvalonia.Styling;
 using GalaxyBudsClient.Interface;
 using GalaxyBudsClient.Interface.Dialogs;
+using GalaxyBudsClient.Interface.StyledWindow;
 using GalaxyBudsClient.Message;
 using GalaxyBudsClient.Message.Decoder;
 using GalaxyBudsClient.Message.Encoder;
@@ -27,7 +29,7 @@ using GalaxyBudsClient.Model.Config;
 using GalaxyBudsClient.Model.Constants;
 using GalaxyBudsClient.Model.Specifications;
 using GalaxyBudsClient.Platform;
-#if !Android
+#if !Android && !iOS
 using GalaxyBudsClient.Scripting;
 using GalaxyBudsClient.Scripting.Experiment;
 #endif
@@ -53,7 +55,7 @@ public class App : Application
             defaultBindingMode: BindingMode.OneWay, defaultValue: []);
     public NativeMenu TrayMenu => GetValue(TrayMenuProperty);
     
-#if !Android
+#if !Android && !iOS
     private readonly ExperimentManager _experimentManager = new();
 #endif
     
@@ -64,7 +66,8 @@ public class App : Application
     public override void Initialize()
     {
         DataContext = this;
-            
+        UiDiagnostics.Init();
+
 #if OSX
 #if MACOS_SDK
         NSApplication.Init();
@@ -75,7 +78,17 @@ public class App : Application
 #endif
 
         AvaloniaXamlLoader.Load(this);
-            
+
+        if (PlatformUtils.UseIosDesign)
+        {
+            // iPhone look: grouped lists and iOS controls on top of the desktop styles
+            Styles.Add(new StyleInclude(new Uri(Program.AvaresUrl))
+            {
+                Source = new Uri(Program.AvaresUrl + "/Interface/Styling/IosStyles.axaml")
+            });
+            Resources["AppPageMargin"] = new Thickness(16, 0, 16, 32);
+        }
+
         if (Loc.IsTranslatorModeEnabled)
         {
             Settings.Data.Locale = Locales.custom;
@@ -88,7 +101,7 @@ public class App : Application
         }, DispatcherPriority.Render);
         
         Log.Information("Translator mode file location: {File}", Loc.TranslatorModeFile);
-#if !Android
+#if !Android && !iOS
         ScriptManager.Instance.RegisterUserHooks();
         Log.Debug("Environment: {Env}", _experimentManager.CurrentEnvironment());
 #endif
@@ -104,6 +117,12 @@ public class App : Application
         // accessibility-tree failure — it is benign and affects an assistive-technology query, not
         // the UI itself — while letting every other exception crash and report as before.
         Dispatcher.UIThread.UnhandledException += OnDispatcherUnhandledException;
+        // The cache must subscribe to SppMessageReceiver before anything that reads it from its own
+        // handler for the same message. Handlers run in subscription order: if OnExtendedStatusUpdate
+        // (below) ran first, the connection popup it creates would read a cache that was cleared on the
+        // last disconnect and show no battery levels, because the BaseUpdate it would have caught has
+        // already fired for that message.
+        DeviceMessageCache.Init();
         /* Must subscribe before the initial connection attempt to catch its Connected event */
         MultipointPatcher.Init();
 
@@ -159,8 +178,6 @@ public class App : Application
         // ExtendedStatusUpdate subscribed earlier (before MainWindow) — see comment there
         SppMessageReceiver.Instance.NoiseControlUpdateResponse += OnNoiseControlUpdate;
 
-        DeviceMessageCache.Init();
-        
         if (Loc.IsTranslatorModeEnabled)
         {
             Dialogs.ShowTranslatorTools();
@@ -190,9 +207,29 @@ public class App : Application
     
     private void ShowPopup(bool noDebounce = false)
     {
-        if (!PlatformUtils.IsDesktop || (_popupShown && !noDebounce))
+        if (_popupShown && !noDebounce)
             return;
-        
+
+        // iOS: the BudsBridge SpringBoard tweak shows the popup over other apps and the lock screen, and stays out of
+        // the way while this app is open, where the battery levels are on screen anyway. So no card of the app's own:
+        // "Show demo popup" asks the tweak for its card instead.
+        if (PlatformUtils.IsIOS)
+        {
+            if (noDebounce)
+                _ = BudsBridgeSettings.ShowPopupAsync();
+            return;
+        }
+
+        // iOS design preview on a desktop (GBC_IOS_DESIGN=1): no extra windows, so the popup is a card at the top of the main view
+        if (PlatformUtils.UseIosDesign && MainView.Instance?.ShowConnectionBanner() == true)
+        {
+            _popupShown = true;
+            return;
+        }
+
+        if (!PlatformUtils.IsDesktop)
+            return;
+
         if (_popup is { IsVisible: true })
         {
             _popup.UpdateSettings();
@@ -357,6 +394,11 @@ public class App : Application
     private void LoadThemeProperties()
     {
         FluentTheme.PreferSystemTheme = Settings.Data.Theme == Themes.System;
+        if (!PlatformUtils.IsDesktop || PlatformUtils.UseIosDesign)
+        {
+            // Mobile has no window to apply the theme to (IStyledWindow), so set it app-wide
+            RequestedThemeVariant = IStyledWindow.GetThemeVariant();
+        }
         var color = Settings.Data.AccentColor;
         if(Color.FromUInt32(color).A == 0)
         {
@@ -364,6 +406,7 @@ public class App : Application
         }
         FluentTheme.CustomAccentColor = Color.FromUInt32(color);
         Resources["AccentColor"] = FluentTheme.CustomAccentColor;
+        Resources["IosAccentBrush"] = new SolidColorBrush(Color.FromUInt32(color));
     }
         
     private void TrayIcon_OnClicked(object? sender, EventArgs e)

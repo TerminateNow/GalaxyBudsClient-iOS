@@ -6,6 +6,8 @@
              xmlns:ext="clr-namespace:GalaxyBudsClient.Interface.MarkupExtensions"
              xmlns:pages="clr-namespace:GalaxyBudsClient.Interface.ViewModels.Pages"
              xmlns:i18N="clr-namespace:GalaxyBudsClient.Generated.I18N"
+             xmlns:converters="clr-namespace:GalaxyBudsClient.Interface.Converters"
+             xmlns:platform="clr-namespace:GalaxyBudsClient.Platform;assembly=GalaxyBudsClient.Platform"
              mc:Ignorable="d" d:DesignWidth="800"
              x:Class="GalaxyBudsClient.Interface.Pages.NoiseControlPage"
              x:DataType="pages:NoiseControlPageViewModel"
@@ -21,6 +23,52 @@
                 <ext:RequiresConnectedDeviceBehavior />
             </Interaction.Behaviors>
             
+            <!-- iOS design: pick one noise control mode, like the AirPods settings -->
+            <controls:SettingsGroup IsVisible="{x:Static platform:PlatformUtils.UseIosDesign}">
+                <Interaction.Behaviors>
+                    <ext:RequiresFeatureBehavior Feature="NoiseControl" />
+                </Interaction.Behaviors>
+
+                <controls:SettingsSymbolItem Name="ModeOff"
+                                             Content="{ext:Translate {x:Static i18N:Keys.Off}}"
+                                             Symbol="Speaker2"
+                                             IsClickEnabled="True"
+                                             Click="OnModeClicked">
+                    <controls:SettingsSymbolItem.Footer>
+                        <Path Data="M1.5 7.5l4.5 4.5 8.5-10" Width="16" Height="14"
+                              Stroke="{DynamicResource IosAccentBrush}" StrokeThickness="2.4"
+                              StrokeLineCap="Round" StrokeJoin="Round"
+                              IsVisible="{Binding NoiseControlMode, Converter={x:Static converters:IosEqualsConverter.Instance}, ConverterParameter=Off}" />
+                    </controls:SettingsSymbolItem.Footer>
+                </controls:SettingsSymbolItem>
+                <controls:SettingsSymbolItem Name="ModeAnc"
+                                             Content="{ext:Translate {x:Static i18N:Keys.Anc}}"
+                                             Description="{ext:Translate {x:Static i18N:Keys.NcAsAncDescription}}"
+                                             Symbol="HeadphonesSoundWave"
+                                             IsClickEnabled="True"
+                                             Click="OnModeClicked">
+                    <controls:SettingsSymbolItem.Footer>
+                        <Path Data="M1.5 7.5l4.5 4.5 8.5-10" Width="16" Height="14"
+                              Stroke="{DynamicResource IosAccentBrush}" StrokeThickness="2.4"
+                              StrokeLineCap="Round" StrokeJoin="Round"
+                              IsVisible="{Binding NoiseControlMode, Converter={x:Static converters:IosEqualsConverter.Instance}, ConverterParameter=NoiseReduction}" />
+                    </controls:SettingsSymbolItem.Footer>
+                </controls:SettingsSymbolItem>
+                <controls:SettingsSymbolItem Name="ModeAmbient"
+                                             Content="{ext:Translate {x:Static i18N:Keys.MainpageAmbientSound}}"
+                                             Description="{ext:Translate {x:Static i18N:Keys.AsHeaderDescription}}"
+                                             Symbol="MicSparkle"
+                                             IsClickEnabled="True"
+                                             Click="OnModeClicked">
+                    <controls:SettingsSymbolItem.Footer>
+                        <Path Data="M1.5 7.5l4.5 4.5 8.5-10" Width="16" Height="14"
+                              Stroke="{DynamicResource IosAccentBrush}" StrokeThickness="2.4"
+                              StrokeLineCap="Round" StrokeJoin="Round"
+                              IsVisible="{Binding NoiseControlMode, Converter={x:Static converters:IosEqualsConverter.Instance}, ConverterParameter=AmbientSound}" />
+                    </controls:SettingsSymbolItem.Footer>
+                </controls:SettingsSymbolItem>
+            </controls:SettingsGroup>
+
             <controls:SettingsGroup>
                 <Interaction.Behaviors>
                     <ext:RequiresFeatureBehavior Feature="AmbientSound" />
@@ -30,6 +78,7 @@
                     Content="{ext:Translate {x:Static i18N:Keys.AsEnable}}"
                     Description="{ext:Translate {x:Static i18N:Keys.AsHeaderDescription}}"
                     Symbol="MicSparkle"
+                    IsVisible="{Binding !., Source={x:Static platform:PlatformUtils.UseIosDesign}}"
                     IsChecked="{Binding IsAmbientSoundEnabled}" />
 
                 <controls:SettingsSymbolItem Content="{ext:Translate {x:Static i18N:Keys.NcAsHeader}}"
@@ -56,6 +105,7 @@
                     Content="{ext:Translate {x:Static i18N:Keys.Anc}}"
                     Description="{ext:Translate {x:Static i18N:Keys.NcAsAncDescription}}"
                     Symbol="HeadphonesSoundWave"
+                    IsVisible="{Binding !., Source={x:Static platform:PlatformUtils.UseIosDesign}}"
                     IsChecked="{Binding IsAncEnabled}" />
 
                 <controls:SettingsSwitchItem

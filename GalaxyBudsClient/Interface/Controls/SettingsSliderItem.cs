@@ -8,6 +8,8 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Threading;
 
+using GalaxyBudsClient.Platform;
+
 namespace GalaxyBudsClient.Interface.Controls;
 
 
@@ -31,6 +33,14 @@ public class SettingsSliderItem : SettingsSymbolItem
         IsClickEnabled = false;
         TickPlacement = TickPlacement.BottomRight;
         Footer = _slider;
+        Classes.Add("SliderItem");
+
+        if (PlatformUtils.UseIosDesign)
+        {
+            // iOS design: the slider gets its own full-width line under the title
+            _slider.MinWidth = 0;
+            TickPlacement = TickPlacement.None;
+        }
     }
     
     private readonly Timer _timer;

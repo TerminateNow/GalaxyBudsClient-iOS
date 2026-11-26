@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:ui="using:FluentAvalonia.UI.Controls"
+             xmlns:ic="using:FluentIcons.Avalonia.Fluent"
              xmlns:vm="using:GalaxyBudsClient.Interface.ViewModels"
              xmlns:platform="clr-namespace:GalaxyBudsClient.Platform"
              xmlns:ext="clr-namespace:GalaxyBudsClient.Interface.MarkupExtensions"
@@ -26,10 +27,66 @@
                            Name="NavView"
                            IsSettingsVisible="False"
                            IsBackEnabled="{Binding #FrameView.CanGoBack}">
-            <Grid RowDefinitions="Auto,Auto,*"
+            <Grid RowDefinitions="Auto,Auto,Auto,*"
                   Name="ContentContainer">
-                
-                <ui:FAInfoBar Grid.Row="0"
+
+                <!-- iOS design: one header row right below the status bar. At the top of a page it shows the large
+                     title (with the back chevron and the settings button); scrolled, it is shorter and shows the
+                     small centered title instead (MainView.SetIosTitleCollapsed). -->
+                <Grid Grid.Row="0"
+                      Name="IosNavBar"
+                      IsVisible="False"
+                      Height="52"
+                      ColumnDefinitions="Auto,*,Auto">
+                    <Button Grid.Column="0"
+                            Name="IosBackButton"
+                            Classes="IosNavButton"
+                            IsVisible="False"
+                            Click="OnIosBackClicked">
+                        <Path Data="M10 2L2 10l8 8"
+                              Width="12" Height="20"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="2.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round"
+                              VerticalAlignment="Center" />
+                    </Button>
+                    <TextBlock Grid.Column="1"
+                               Name="IosLargeTitle"
+                               IsVisible="False"
+                               FontSize="32"
+                               FontWeight="Bold"
+                               LetterSpacing="-0.5"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"
+                               Margin="12,0,4,0" />
+                    <TextBlock Grid.Column="0" Grid.ColumnSpan="3"
+                               Name="IosInlineTitle"
+                               FontSize="17"
+                               FontWeight="SemiBold"
+                               MaxWidth="200"
+                               TextTrimming="CharacterEllipsis"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Opacity="0">
+                        <TextBlock.Transitions>
+                            <Transitions>
+                                <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+                            </Transitions>
+                        </TextBlock.Transitions>
+                    </TextBlock>
+                    <Button Grid.Column="2"
+                            Name="IosSettingsButton"
+                            Classes="IosNavButton"
+                            IsVisible="False"
+                            Width="44"
+                            Click="OnIosSettingsClicked">
+                        <ic:SymbolIcon Symbol="Settings" FontSize="24" />
+                    </Button>
+                </Grid>
+
+                <ui:FAInfoBar Grid.Row="1"
+                            Name="DisconnectedInfoBar"
                             Title="{ext:Translate {x:Static i18N:Keys.PlacementDisconnected}}"
                             IsClosable="False"
                             Severity="Warning"
@@ -66,7 +123,7 @@
 
                 <ui:FABreadcrumbBar Name="FABreadcrumbBar"
                                   MinHeight="56"
-                                  Grid.Row="1"
+                                  Grid.Row="2"
                                   ItemsSource="{Binding BreadcrumbItems}"
                                   Margin="20,10">
                     <ui:FABreadcrumbBar.ItemTemplate>
@@ -77,7 +134,7 @@
                     </ui:FABreadcrumbBar.ItemTemplate>
                 </ui:FABreadcrumbBar>
 
-                <ui:FAFrame Grid.Row="2" Name="FrameView" />
+                <ui:FAFrame Grid.Row="3" Name="FrameView" />
             </Grid>
         </ui:FANavigationView>
 

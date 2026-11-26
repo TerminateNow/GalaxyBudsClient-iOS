@@ -1,0 +1,65 @@
+name: Compile iOS app (jailbreak)
+
+# Builds GalaxyBudsClient.iOS unsigned, fakesigns it with ldid and packs it as an .ipa for TrollStore Lite
+# on jailbroken devices (Dopamine). Bluetooth goes through the BudsBridge package (ios/BudsBridge).
+
+on:
+  push:
+    branches: [ claude-ipa ]
+    paths:
+      - 'GalaxyBudsClient.iOS/**'
+      - 'GalaxyBudsClient/**'
+      - 'GalaxyBudsClient.Platform/**'
+      - 'GalaxyBudsClient.Generators/**'
+      - 'global.json'
+      - '.github/workflows/compile-ios.yml'
+      - '!**/*.md'
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    # The .NET 11 iOS workload (SDK 27.2) needs Xcode 27.2, which only the xcode-27 image has
+    runs-on: xcode-27
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Select Xcode
+      run: |
+        ls -d /Applications/Xcode*.app
+        XC=/Applications/Xcode_27.2.app
+        [ -d "$XC" ] || XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+        echo "Using $XC"
+        sudo xcode-select -s "$XC/Contents/Developer"
+        xcodebuild -version
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        global-json-file: global.json
+
+    - name: Install iOS workload
+      run: dotnet workload install ios
+
+    # IsIOS=true must be global: like IsAndroid in GalaxyBudsClient.Android/build.sh, it doesn't
+    # reach the shared project through the ProjectReference's AdditionalProperties during restore
+    - name: Restore dependencies
+      run: dotnet restore -p:IsIOS=true --configfile GalaxyBudsClient/nuget.config GalaxyBudsClient.iOS/GalaxyBudsClient.iOS.csproj
+
+    - name: Build
+      run: dotnet publish GalaxyBudsClient.iOS/GalaxyBudsClient.iOS.csproj -c Release --no-restore -p:IsIOS=true -p:ValidateXcodeVersion=false
+
+    - name: Package
+      run: |
+        brew install ldid
+        APP=$(find GalaxyBudsClient.iOS/bin/Release -name "*.app" -type d -prune | head -1)
+        echo "App bundle: $APP"
+        du -sh "$APP"
+        VERSION=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' GalaxyBudsClient/Application.props)
+        GalaxyBudsClient.iOS/packaging/package.sh "$APP" "${VERSION}-${{ github.run_number }}" dist
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: GalaxyBudsClient_iOS_jailbreak
+        path: dist/*.ipa

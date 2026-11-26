@@ -97,9 +97,16 @@ Both are built on Linux or WSL2, without Xcode:
   It subclasses ControlCenterUIKit's `CCUIMenuModuleViewController`. The private API it uses was read from the device's runtime and is listed in `research/NOTES.md`.
   - The same package (1.1.0) ships the **connection popup**, `ConnectionPopup.m` → `GalaxyBudsPopup.dylib`, a SpringBoard-only tweak with no hooks.
     On BluetoothManager's `BluetoothDeviceConnectSuccessNotification` for a "Buds" device it asks the daemon for `BATTERY` and slides
-    a card over everything (its own window). `budsrfcomm popup` shows it on demand (Darwin notification). The package build copies
-    the earbud photos from the app's `Resources/Device/Realistic` (`POPUP_IMAGES` in the Makefile). Its private API assumptions
-    aren't verified on the device yet; they're listed in `research/NOTES.md`.
+    a card over everything: its own window (a runtime subclass of `SBSecureWindow`), or, while the phone is locked, the
+    `SBCoverSheetWindow` (no other SpringBoard window shows on the locked lock screen). Tap opens the app (through
+    `SBLockScreenManager unlockWithRequest:` when locked), hold keeps it up, hold-and-drag-down opens the app, swipes up, left or
+    right dismiss it. `budsrfcomm popup` shows it on demand (Darwin notification). The package build copies the earbud photos from
+    the app's `Resources/Device/Realistic` (`POPUP_IMAGES` in the Makefile). It also keeps a passive battery notification in the
+    app's name while Buds are connected (`UNUserNotificationCenter initWithBundleIdentifier:`); only the app can ask for the
+    permission, so `GalaxyBudsClient.iOS/AppDelegate.cs` asks at launch.
+    Verified on the iPhone 7 except the notification. Findings and private API details are in `research/NOTES.md`.
+    **An exception in this tweak crashes SpringBoard into safe mode:** keep UI work inside the `@try` wrappers and never put a
+    possibly-nil object in a collection literal (that was the lock-screen crash).
   - **Settings:** `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist` holds `Address` (the default device),
     `Channels` (MAC to RFCOMM channel) and `Port`. They're reread on every connection. A channel that works is saved per device.
     Without a MAC or a saved default, the paired device whose name contains "Buds" is used.
@@ -131,7 +138,7 @@ Rules that came out of on-device testing:
 
 Verified on device: an iPhone 7 on 15.8.8 talks to Galaxy Buds3 Pro on RFCOMM **channel 20**.
 The 0.3.1 background service (`PING`, `LIST`, `CONNECT`, saved settings, launchd) is also verified on that device, and so is
-0.4.0's `NOISE` (short sessions and injection into a `CONNECT` session). 0.5.0's `BATTERY` and the connection popup aren't tried on the device yet.
+0.4.0's `NOISE` (short sessions and injection into a `CONNECT` session), and 0.5.0's `BATTERY` and the connection popup.
 Buds3 Pro findings from that device (details in `research/NOTES.md`): noise control including Adaptive works; the 360 Audio
 head-tracking messages (`0x7c`, `0xc3`) and the "Hi Bixby" wake-word event are ignored or never sent, so the app's 360 Audio
 page can't get head tracking from Buds3 Pro as written.

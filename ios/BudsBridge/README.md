@@ -185,7 +185,8 @@ battery levels, over any app, the home screen or the lock screen. It hides after
 ("Left 89% · Right 94% · Case 100%") in Notification Center and on the lock screen. It's passive (no sound, banner or screen
 wake), refreshes when the Buds connect, when iOS reports a battery change, and every 10 minutes (each refresh moves it back
 to the top), and goes away when they disconnect. iOS has no pinned notifications, so a newer one from another app sits above
-it until the next refresh. The first time, iOS asks whether GalaxyBudsClient may send notifications.
+it until the next refresh. It needs notification permission for GalaxyBudsClient: only the app can ask for it, so open
+the app once (from the build that asks at launch) and tap Allow.
 Buds3 Pro show their own photos (Silver and White); other models show a generic earbud symbol.
 
 - It's `GalaxyBudsPopup.dylib`, a tweak loaded into SpringBoard only (`ccmodule/ConnectionPopup.m`). It hooks nothing: it listens

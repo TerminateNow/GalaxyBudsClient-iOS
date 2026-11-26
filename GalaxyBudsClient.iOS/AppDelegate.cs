@@ -7,6 +7,7 @@ using GalaxyBudsClient.Platform;
 using ObjCRuntime;
 using ReactiveUI.Avalonia;
 using Serilog;
+using UserNotifications;
 
 namespace GalaxyBudsClient.iOS;
 
@@ -26,11 +27,32 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
         AppDomain.CurrentDomain.UnhandledException += (_, args) => LogFatal(args.ExceptionObject as Exception);
 
         PlatformImpl.InjectExternalBackend(new IosPlatformImplCreator());
+        RequestNotificationPermission();
 
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()
             .LogToTrace()
             .UseReactiveUI(_ => { });
+    }
+
+    // The battery notification is posted in the app's name by the BudsBridge SpringBoard tweak (noisecc package), but
+    // iOS only lets the app itself ask for notification permission. Ask once (iOS shows the prompt the first time only).
+    private static void RequestNotificationPermission()
+    {
+        try
+        {
+            UNUserNotificationCenter.Current.RequestAuthorization(UNAuthorizationOptions.Alert, (granted, error) =>
+            {
+                if (error != null)
+                    Log.Warning("iOS: Notification permission request failed: {Error}", error.LocalizedDescription);
+                else
+                    Log.Information("iOS: Notification permission {Result}", granted ? "granted" : "not granted");
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "iOS: Couldn't request notification permission");
+        }
     }
 
     private static void LogFatal(Exception? ex)

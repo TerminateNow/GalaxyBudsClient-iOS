@@ -650,12 +650,9 @@ static void PostBatteryNotification(NSString *name, GBBattery b) {
         [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
             UNAuthorizationStatus status = settings.authorizationStatus;
             if (status == UNAuthorizationStatusNotDetermined) {
-                GB_LOG(@"asking for notification permission for the app");
-                [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *error) {
-                    GB_LOG(@"notification permission %@%@", granted ? @"granted" : @"not granted",
-                           error ? [@": " stringByAppendingString:error.localizedDescription] : @"");
-                    if (granted) AddBatteryNotification(center, name, b);
-                }];
+                // Only the app can ask: asking from SpringBoard fails with "Notifications are not allowed for this
+                // application" (seen on 15.8.8). The app asks at launch.
+                GB_LOG(@"no notification permission yet: open GalaxyBudsClient once and allow notifications");
             } else if (status == UNAuthorizationStatusDenied) {
                 GB_LOG(@"notifications are off for GalaxyBudsClient (Settings > Notifications)");
             } else {

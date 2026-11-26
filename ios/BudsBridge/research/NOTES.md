@@ -227,3 +227,8 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
   (`setName:`, `setSource:`, `setIntent:`, `setWantsBiometricPresentation:`, `setDestinationApplication:`,
   `setForceAlertAuthenticationUI:`, `setProcess:`, `setConfirmedNotInPocket:`). The popup uses source 17 and intent 3, the
   values other tweaks use to unlock and open an app; not yet confirmed. `SBApplicationController` gives the `SBApplication`.
+- **Battery notification** (2026-11-26): `-[UNUserNotificationCenter initWithBundleIdentifier:]` exists in SpringBoard, and
+  `getNotificationSettings` for `com.galaxybudsclient.ios` reports "not determined". Asking for permission from SpringBoard on
+  the app's behalf fails with "Notifications are not allowed for this application", so the app asks at launch
+  (`GalaxyBudsClient.iOS/AppDelegate.cs`). `BluetoothDeviceDisconnectSuccessNotification` and
+  `BluetoothDeviceBatteryChangedNotification` are posted in SpringBoard with the `BluetoothDevice` as the object.

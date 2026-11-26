@@ -276,11 +276,15 @@ static void HideCard(void) { HideCardToward(0); }
 
 static BOOL IsLocked(void);
 
+static void RefreshNotification(NSString *why);
+
 static void LaunchApp(void) {
     id sb = UIApplication.sharedApplication;
     if (![sb respondsToSelector:@selector(launchApplicationWithIdentifier:suspended:)]) { GB_LOG(@"can't launch apps"); return; }
     GB_LOG(@"opening the app");
     [sb launchApplicationWithIdentifier:GB_APP_BUNDLE_ID suspended:NO];
+    // Opening the app can clear its notifications: put the battery one back
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ RefreshNotification(@"app opened"); });
 }
 
 // Open the GalaxyBudsClient app. On the lock screen, ask for Touch ID or the passcode first, as a notification does.
@@ -691,7 +695,26 @@ static void PostBatteryNotification(NSString *name, GBBattery b) {
         if ([bulletin respondsToSelector:NSSelectorFromString(@"setClearable:")]) [bulletin setValue:@YES forKey:@"clearable"];
         id open = [actionClass respondsToSelector:@selector(actionWithLaunchBundleID:callblock:)]
                   ? [actionClass actionWithLaunchBundleID:GB_APP_BUNDLE_ID callblock:nil] : nil;
-        if (open) [bulletin setValue:open forKey:@"defaultAction"];
+        if (open) {
+            // Opening the app from the notification shouldn't clear it
+            SEL keep = NSSelectorFromString(@"setShouldDismissBulletin:");
+            if ([open respondsToSelector:keep]) [open setValue:@NO forKey:@"shouldDismissBulletin"];
+            static BOOL logged;
+            if (!logged) {
+                logged = YES;
+                unsigned n = 0;
+                Method *methods = class_copyMethodList(object_getClass(open), &n);
+                NSMutableArray *names = [NSMutableArray array];
+                for (unsigned i = 0; i < n; i++) {
+                    NSString *sel = NSStringFromSelector(method_getName(methods[i]));
+                    if ([sel rangeOfString:@"ismiss"].location != NSNotFound) [names addObject:sel];
+                }
+                free(methods);
+                GB_LOG(@"tap action %@ keeps the notification: %@ (%@)", NSStringFromClass(object_getClass(open)),
+                       [open respondsToSelector:keep] ? @"yes" : @"no", [names componentsJoinedByString:@" "]);
+            }
+            [bulletin setValue:open forKey:@"defaultAction"];
+        }
         [server withdrawBulletinRequestsWithRecordID:GB_BULLETIN_RECORD_ID forSectionID:GB_APP_BUNDLE_ID];
         [server publishBulletin:bulletin destinations:kBulletinDestinations];
         GB_LOG(@"battery notification: %@", message);

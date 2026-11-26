@@ -188,11 +188,16 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
 - **Connection event.** BluetoothManager.framework posts `BluetoothDeviceConnectSuccessNotification` on the default
   `NSNotificationCenter` in SpringBoard, with a `BluetoothDevice` (`-name`, `-address`) as the object. This is the name other
   tweaks use; it's not read from this device's runtime. With `PopupDebug` on, every notification whose name contains
-  "Bluetooth" is logged, which shows the real name if this one is wrong. It may fire once per profile (A2DP, HFP), so the
-  popup ignores the same device for 30 seconds.
-- **Window.** A `UIWindow` created with SpringBoard's first `UIWindowScene` (or `initWithFrame:` if there's none), window level
-  1100 (status bar + 100), `-_setSecure:YES` so it also shows on the lock screen, `-_canBecomeKeyWindow` NO, and `hitTest`
-  passing touches outside the card through. Whether 1100 is above the lock screen and banners on 15.8.8 is unknown.
+  "Bluetooth" is logged, which shows the real name if this one is wrong.
+  **Verified 2026-11-26:** it fires on 15.8.8 with the `BluetoothDevice` as described, three times within the same second per
+  connection (once per profile), so the popup ignores the same device for 5 seconds. A 30-second window skipped real reconnects.
+  The card shows over apps and the home screen.
+- **Window.** A `UIWindow` created with SpringBoard's first `UIWindowScene` (verified: the scene exists and the card shows),
+  window level 1100 (status bar + 100, or the `PopupWindowLevel` setting), `-_canBecomeKeyWindow` NO, and `hitTest` passing
+  touches outside the card through.
+  **Lock screen:** with only `-_setSecure:YES`, the card didn't show on the lock screen (2026-11-26). Now trying
+  `-_shouldCreateContextAsSecure` and `-_isSecure` overrides; `PopupDebug` logs the lock state and SpringBoard's visible
+  windows with their levels.
 - **Frontmost app.** `-[SpringBoard _accessibilityFrontMostApplication]` returns an `SBApplication` with `bundleIdentifier`.
   When it's `com.galaxybudsclient.ios`, the popup is left to the app.
 - **SF Symbols.** `battery.100/75/50/25/0` and `earbuds` are assumed to exist on iOS 15; missing ones fall back to

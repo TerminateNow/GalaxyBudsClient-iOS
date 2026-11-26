@@ -8,7 +8,9 @@
 //
 // Settings, in the budsrfcomm settings file (budsrfcomm config, or edit the plist):
 //   Popup       NO turns the popup off (default YES)
-//   PopupDebug  YES logs every Bluetooth notification SpringBoard sees, to find the right one on another iOS build
+//   PopupDebug  YES logs every Bluetooth notification SpringBoard sees (to find the right one on another iOS build),
+//               and SpringBoard's windows with their levels each time the card shows
+//   PopupWindowLevel  the card window's level (default 1100); it must be above the lock screen's windows
 // Logs go to the system log with the prefix "[GalaxyBudsPopup]" (oslog | grep GalaxyBudsPopup).
 // `budsrfcomm popup` shows the card for the connected Buds without reconnecting them (a Darwin notification).
 
@@ -33,8 +35,9 @@
 static NSString *const kConnectNotification = @"BluetoothDeviceConnectSuccessNotification";
 
 static const NSTimeInterval kVisibleSeconds = 4;
-static const NSTimeInterval kRepeatSeconds = 30;   // a reconnect within this time doesn't show the card again
-#define GB_WINDOW_LEVEL 1100.0  // UIWindowLevelStatusBar (1000) + 100: above apps and the status bar
+// Each connection posts the notification once per Bluetooth profile, all within the same second (seen on 15.8.8)
+static const NSTimeInterval kRepeatSeconds = 5;
+#define GB_WINDOW_LEVEL 1100.0  // default: UIWindowLevelStatusBar (1000) + 100, above apps and the status bar
 
 @protocol GBBluetoothDevice <NSObject>
 - (NSString *)name;
@@ -130,6 +133,9 @@ static BOOL IsBuds(NSString *name) {
 @end
 
 @implementation GBPopupWindow
+// The lock screen only shows windows whose layer context is created as secure
+- (BOOL)_shouldCreateContextAsSecure { return YES; }
+- (BOOL)_isSecure { return YES; }
 // Touches outside the card go to whatever is underneath
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *v = [super hitTest:point withEvent:event];
@@ -251,6 +257,20 @@ static void HideCard(void) {
 }
 @end
 
+@interface NSObject (GBLockScreen)
++ (instancetype)sharedInstance;
+- (BOOL)isUILocked;
+@end
+
+// PopupDebug: what's on screen when the card shows, to place it above the lock screen
+static void LogWindows(UIWindowScene *scene) {
+    Class lsm = NSClassFromString(@"SBLockScreenManager");
+    id manager = [lsm respondsToSelector:@selector(sharedInstance)] ? [lsm sharedInstance] : nil;
+    GB_LOG(@"locked: %@", [manager respondsToSelector:@selector(isUILocked)] ? ([manager isUILocked] ? @"yes" : @"no") : @"unknown");
+    for (UIWindow *w in scene.windows)
+        if (!w.hidden) GB_LOG(@"window %@ level %.1f", NSStringFromClass(w.class), w.windowLevel);
+}
+
 static UIWindowScene *SpringBoardScene(void) {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
         if ([scene isKindOfClass:UIWindowScene.class]) return (UIWindowScene *)scene;
@@ -266,13 +286,15 @@ static void ShowCard(NSString *name, GBBattery b) {
         gWindow = scene ? [[GBPopupWindow alloc] initWithWindowScene:scene]
                         : [[GBPopupWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
         gWindow.frame = UIScreen.mainScreen.bounds;
-        gWindow.windowLevel = GB_WINDOW_LEVEL;
+        id level = Config()[@"PopupWindowLevel"];
+        gWindow.windowLevel = [level respondsToSelector:@selector(doubleValue)] ? [level doubleValue] : GB_WINDOW_LEVEL;
         gWindow.backgroundColor = UIColor.clearColor;
         gWindow.rootViewController = [GBPopupController new];
         gWindow.rootViewController.view.backgroundColor = UIColor.clearColor;
         if ([gWindow respondsToSelector:@selector(_setSecure:)]) [gWindow _setSecure:YES];  // also on the lock screen
-        GB_LOG(@"window created (%@)", scene ? @"in SpringBoard's scene" : @"without a scene");
+        GB_LOG(@"window created (%@, level %.1f)", scene ? @"in SpringBoard's scene" : @"without a scene", gWindow.windowLevel);
     }
+    if (ConfigBool(@"PopupDebug", NO)) LogWindows(gWindow.windowScene);
     gWindow.hidden = NO;
     UIView *root = gWindow.rootViewController.view;
 

@@ -181,9 +181,11 @@ Buds3 Pro show their own photos (Silver and White); other models show a generic 
   for BluetoothManager's `BluetoothDeviceConnectSuccessNotification`, and for a device whose name contains "Buds" it asks the service
   for `BATTERY` 2 seconds later (retrying twice, 3 seconds apart). It works whether or not the tile is in Control Center.
 - While the GalaxyBudsClient app is open, the app shows its own card instead (if its popup setting is on).
-- It doesn't show again if the same Buds reconnect within 30 seconds (several Bluetooth profiles connect one after another).
+- Each connection posts the notification once per Bluetooth profile (three times within a second on the iPhone 7), so the
+  same Buds are ignored for 5 seconds after a card.
 - Settings, in the service's settings file `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`:
-  `Popup` (Boolean, `NO` turns it off) and `PopupDebug` (Boolean, `YES` logs every Bluetooth notification SpringBoard sees).
+  `Popup` (Boolean, `NO` turns it off), `PopupDebug` (Boolean, `YES` logs every Bluetooth notification SpringBoard sees,
+  and SpringBoard's windows with their levels each time the card shows) and `PopupWindowLevel` (Real, default `1100`).
   Add them with Filza's plist editor. `Popup` is read on every connection; `PopupDebug` needs a respring (`sbreload`).
 
 - `budsrfcomm popup` shows the card for the connected Buds right away, to try it without reconnecting.

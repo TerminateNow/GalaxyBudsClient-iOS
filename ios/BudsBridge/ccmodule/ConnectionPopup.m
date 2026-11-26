@@ -295,6 +295,22 @@ static void LogWindows(UIWindowScene *scene) {
         }
     }
     GB_LOG(@"popup window in scene.windows: %@", [scene.windows containsObject:gWindow] ? @"yes" : @"no");
+    static BOOL listedHiding;
+    if (!listedHiding) {
+        listedHiding = YES;
+        for (NSString *cls in @[@"SBWindowHidingManager", @"SBSecureWindow", @"SBWindow"]) {
+            Class c = NSClassFromString(cls);
+            if (!c) { GB_LOG(@"%@: no such class", cls); continue; }
+            for (int meta = 0; meta < 2; meta++) {
+                unsigned n = 0;
+                Method *methods = class_copyMethodList(meta ? object_getClass(c) : c, &n);
+                NSMutableArray *names = [NSMutableArray array];
+                for (unsigned i = 0; i < n; i++) [names addObject:NSStringFromSelector(method_getName(methods[i]))];
+                free(methods);
+                GB_LOG(@"%@ %@ methods: %@", cls, meta ? @"class" : @"instance", [names componentsJoinedByString:@" "]);
+            }
+        }
+    }
     for (UIWindow *w in scene.windows) {
         if (w.hidden) continue;
         NSMutableArray *chain = [NSMutableArray array];
@@ -445,6 +461,13 @@ static void ShowCard(NSString *name, GBBattery b) {
         if (generation == gGeneration && card == gCard) HideCard();
     });
     GB_LOG(@"showing %@: left %d%%, right %d%%, case %d%%, color %d", name, b.left, b.right, b.caseLevel, b.color);
+    if (ConfigBool(@"PopupDebug", NO)) {
+        UIWindow *w = gWindow;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            GB_LOG(@"1 s later: hidden %d alpha %.2f layer.hidden %d layer.opacity %.2f card alpha %.2f in scene %d",
+                   w.hidden, w.alpha, w.layer.hidden, w.layer.opacity, card.alpha, [w.windowScene.windows containsObject:w]);
+        });
+    }
 }
 
 #pragma mark - Triggers

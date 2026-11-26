@@ -174,11 +174,18 @@ declarations at the top of the file were checked against the iOS 15.8 runtime. I
 ### Connection popup
 
 When Galaxy Buds connect, a card slides down from the top of the screen with the Buds' name and the left, right and case
-battery levels, over any app, the home screen or the lock screen. It hides after 4 seconds, or when you swipe it up.
+battery levels, over any app, the home screen or the lock screen. It hides after 4 seconds, or when you swipe it away
+(up, left or right).
 
 - **Tap** opens the GalaxyBudsClient app. On the lock screen, Touch ID or the passcode is asked for first.
 - **Press and hold** keeps the card up until you let go; it hides 2 seconds after that.
 - **Hold and drag down**, then let go, opens the app too. Holding and letting go without dragging doesn't.
+
+**Battery notification:** while Buds are connected, a notification in the GalaxyBudsClient app's name shows their levels
+("Left 89% · Right 94% · Case 100%") in Notification Center and on the lock screen. It's passive (no sound, banner or screen
+wake), refreshes when the Buds connect, when iOS reports a battery change, and every 10 minutes (each refresh moves it back
+to the top), and goes away when they disconnect. iOS has no pinned notifications, so a newer one from another app sits above
+it until the next refresh. The first time, iOS asks whether GalaxyBudsClient may send notifications.
 Buds3 Pro show their own photos (Silver and White); other models show a generic earbud symbol.
 
 - It's `GalaxyBudsPopup.dylib`, a tweak loaded into SpringBoard only (`ccmodule/ConnectionPopup.m`). It hooks nothing: it listens
@@ -188,7 +195,7 @@ Buds3 Pro show their own photos (Silver and White); other models show a generic 
 - Each connection posts the notification once per Bluetooth profile (three times within a second on the iPhone 7), so the
   same Buds are ignored for 5 seconds after a card.
 - Settings, in the service's settings file `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist`:
-  `Popup` (Boolean, `NO` turns it off), `PopupDebug` (Boolean, `YES` logs every Bluetooth notification SpringBoard sees,
+  `Popup` (Boolean, `NO` turns the card off), `BatteryNotification` (Boolean, `NO` turns the notification off), `PopupDebug` (Boolean, `YES` logs every Bluetooth notification SpringBoard sees,
   and SpringBoard's windows with their levels each time the card shows) and `PopupWindowLevel` (Real, default `1100`).
   Add them with Filza's plist editor. `Popup` is read on every connection; `PopupDebug` needs a respring (`sbreload`).
 

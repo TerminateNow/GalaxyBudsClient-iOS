@@ -64,7 +64,7 @@ build/GalaxyBudsNoise: ccmodule/NoiseControlModule.m
 build/GalaxyBudsPopup.dylib: ccmodule/ConnectionPopup.m
 	@mkdir -p build
 	$(CLANG) $(CFLAGS) -target arm64-apple-ios15.0 -isysroot $(SDK) -fuse-ld=lld --ld-path=$(LD64) -dynamiclib \
-		-install_name $(TWEAKDIR)/GalaxyBudsPopup.dylib -framework Foundation -framework UIKit -framework CoreGraphics -framework QuartzCore \
+		-install_name $(TWEAKDIR)/GalaxyBudsPopup.dylib -framework Foundation -framework UIKit -framework CoreGraphics -framework QuartzCore -framework UserNotifications \
 		-o $@ ccmodule/ConnectionPopup.m
 	$(LDID) -S $@
 

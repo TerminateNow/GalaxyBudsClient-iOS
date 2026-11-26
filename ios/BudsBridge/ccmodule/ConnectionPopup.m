@@ -18,6 +18,7 @@
 // `budsrfcomm popup` shows the card for the connected Buds without reconnecting them (a Darwin notification).
 
 #import <UIKit/UIKit.h>
+#import <UserNotifications/UserNotifications.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <arpa/inet.h>
@@ -38,6 +39,8 @@
 
 // BluetoothManager.framework posts these with a BluetoothDevice as the object
 static NSString *const kConnectNotification = @"BluetoothDeviceConnectSuccessNotification";
+static NSString *const kDisconnectNotification = @"BluetoothDeviceDisconnectSuccessNotification";
+static NSString *const kBatteryNotification = @"BluetoothDeviceBatteryChangedNotification";
 
 static const NSTimeInterval kVisibleSeconds = 4;
 // Each connection posts the notification once per Bluetooth profile, all within the same second (seen on 15.8.8)
@@ -231,14 +234,19 @@ static UIWindow *gWindow;
 static UIView *gCard;
 static NSUInteger gGeneration;
 
-static void HideCardUnsafe(void) {
+// side: 0 slides the card up off the screen, -1 to the left, 1 to the right
+static void HideCardUnsafe(int side) {
     if (!gCard) return;
     UIView *card = gCard;
     UIWindow *window = gWindow;
     gCard = nil;
     NSUInteger generation = ++gGeneration;
-    [UIView animateWithDuration:0.3 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-        card.transform = CGAffineTransformMakeTranslation(0, -(CGRectGetMaxY(card.frame) + 20));
+    CGFloat width = card.superview.bounds.size.width;
+    CGAffineTransform target = side
+        ? CGAffineTransformMakeTranslation(side * (width + 20), card.transform.ty)
+        : CGAffineTransformMakeTranslation(0, -(CGRectGetMaxY(card.frame) + 20));
+    [UIView animateWithDuration:side ? 0.22 : 0.3 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        card.transform = target;
         card.alpha = 0;
     } completion:^(BOOL finished) {
         [card removeFromSuperview];
@@ -247,10 +255,12 @@ static void HideCardUnsafe(void) {
 }
 
 // An exception here would take SpringBoard down (and into safe mode): log it and carry on instead
-static void HideCard(void) {
-    @try { HideCardUnsafe(); }
+static void HideCardToward(int side) {
+    @try { HideCardUnsafe(side); }
     @catch (NSException *e) { GB_LOG(@"hiding the card failed: %@", e); }
 }
+
+static void HideCard(void) { HideCardToward(0); }
 
 @interface NSObject (GBSpringBoard)
 + (instancetype)sharedInstance;
@@ -323,15 +333,33 @@ static void ScheduleHide(UIView *card, NSTimeInterval seconds) {
     HideCard();
     OpenApp();
 }
-// Quick swipe: up dismisses, anything else springs back
+// Sideways: past this distance, or flicked, the card leaves toward that side
+static const CGFloat kSideDismissDistance = 90;
+
+static void FollowFinger(UIView *card, CGFloat dx, CGFloat shownY, CGFloat scale) {
+    card.transform = CGAffineTransformScale(CGAffineTransformMakeTranslation(dx, shownY), scale, scale);
+    card.alpha = 1 - MIN(fabs(dx) / MAX(card.bounds.size.width, 1), 1) * 0.6;
+}
+
+static void SpringBack(UIView *card) {
+    [UIView animateWithDuration:0.25 animations:^{
+        card.transform = CGAffineTransformIdentity;
+        card.alpha = 1;
+    }];
+}
+
+// Quick swipe: up, left or right dismisses; anything else springs back
 + (void)panned:(UIPanGestureRecognizer *)g {
     UIView *card = g.view;
-    CGFloat dy = [g translationInView:card.superview].y;
+    CGPoint t = [g translationInView:card.superview];
     if (g.state == UIGestureRecognizerStateChanged) {
-        card.transform = CGAffineTransformMakeTranslation(0, dy < 0 ? dy : dy / 6);  // resists pulling down
+        FollowFinger(card, t.x, t.y < 0 ? t.y : t.y / 6, 1);  // resists pulling down
     } else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
-        if (dy < -30 || [g velocityInView:card.superview].y < -300) HideCard();
-        else [UIView animateWithDuration:0.25 animations:^{ card.transform = CGAffineTransformIdentity; }];
+        CGPoint v = [g velocityInView:card.superview];
+        if (fabs(t.x) > kSideDismissDistance || (fabs(v.x) > 600 && fabs(v.x) > fabs(v.y)))
+            HideCardToward((t.x + v.x * 0.1) < 0 ? -1 : 1);
+        else if (t.y < -30 || v.y < -300) HideCard();
+        else SpringBack(card);
     }
 }
 // Press and hold: the card stays until released. Dragging down past kOpenDragDistance opens the app on release.
@@ -349,9 +377,9 @@ static void ScheduleHide(UIView *card, NSTimeInterval seconds) {
             break;
         }
         case UIGestureRecognizerStateChanged: {
-            CGFloat dy = p.y - gHoldStart.y;
+            CGFloat dx = p.x - gHoldStart.x, dy = p.y - gHoldStart.y;
             CGFloat shown = dy < 0 ? dy : MIN(dy * 0.6, kOpenDragDistance * 1.6);
-            card.transform = CGAffineTransformScale(CGAffineTransformMakeTranslation(0, shown), 0.97, 0.97);
+            FollowFinger(card, dx, shown, 0.97);
             BOOL past = dy > kOpenDragDistance;
             if (past != gPastOpenThreshold) {
                 gPastOpenThreshold = past;
@@ -363,14 +391,16 @@ static void ScheduleHide(UIView *card, NSTimeInterval seconds) {
         case UIGestureRecognizerStateCancelled: {
             gHeld = NO;
             gHoldToken++;
-            CGFloat dy = p.y - gHoldStart.y;
-            if (g.state == UIGestureRecognizerStateEnded && dy > kOpenDragDistance) {
+            CGFloat dx = p.x - gHoldStart.x, dy = p.y - gHoldStart.y;
+            if (fabs(dx) > kSideDismissDistance && fabs(dx) > dy) {
+                HideCardToward(dx < 0 ? -1 : 1);
+            } else if (g.state == UIGestureRecognizerStateEnded && dy > kOpenDragDistance) {
                 HideCard();
                 OpenApp();
             } else if (dy < -30) {
                 HideCard();
             } else {
-                [UIView animateWithDuration:0.25 animations:^{ card.transform = CGAffineTransformIdentity; }];
+                SpringBack(card);
                 ScheduleHide(card, kAfterHoldSeconds);
             }
             break;
@@ -562,10 +592,94 @@ static void ShowCard(NSString *name, GBBattery b) {
     @catch (NSException *e) { GB_LOG(@"showing the card failed: %@", e); }
 }
 
+#pragma mark - Battery notification
+
+// While Buds are connected, a notification in the GalaxyBudsClient app's name shows their battery levels in Notification
+// Center and on the lock screen. It's posted passive (no sound, banner or screen wake), replaced in place on every
+// refresh (which also moves it back to the top), and removed when the Buds disconnect. iOS has no pinned notifications,
+// so one that arrives after a refresh sits above it until the next one.
+
+@interface UNUserNotificationCenter (GBPrivate)
+- (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier;
+@end
+
+#define GB_NOTIFICATION_ID @"com.galaxybudsclient.popup.battery"
+static const NSTimeInterval kNotificationRefreshSeconds = 600;
+static const NSTimeInterval kMinRefreshSeconds = 60;   // battery-change refreshes closer together than this are skipped
+
+static UNUserNotificationCenter *AppNotificationCenter(void) {
+    static UNUserNotificationCenter *center;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        @try {
+            if ([UNUserNotificationCenter instancesRespondToSelector:@selector(initWithBundleIdentifier:)])
+                center = [[UNUserNotificationCenter alloc] initWithBundleIdentifier:GB_APP_BUNDLE_ID];
+        } @catch (NSException *e) { GB_LOG(@"notification center: %@", e); }
+        if (!center) GB_LOG(@"can't post notifications for the app on this build");
+    });
+    return center;
+}
+
+static NSString *BatteryText(GBBattery b) {
+    NSMutableArray *parts = [NSMutableArray array];
+    if (b.left > 0) [parts addObject:[NSString stringWithFormat:@"Left %d%%", b.left]];
+    if (b.right > 0) [parts addObject:[NSString stringWithFormat:@"Right %d%%", b.right]];
+    if (b.caseLevel > 0 && b.caseLevel <= 100) [parts addObject:[NSString stringWithFormat:@"Case %d%%", b.caseLevel]];
+    return parts.count ? [parts componentsJoinedByString:@" · "] : @"Earbuds in the case";
+}
+
+static void AddBatteryNotification(UNUserNotificationCenter *center, NSString *name, GBBattery b) {
+    UNMutableNotificationContent *content = [UNMutableNotificationContent new];
+    content.title = DisplayName(name);
+    content.body = BatteryText(b);
+    content.threadIdentifier = GB_NOTIFICATION_ID;
+    if ([content respondsToSelector:@selector(setInterruptionLevel:)])
+        content.interruptionLevel = UNNotificationInterruptionLevelPassive;
+    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:GB_NOTIFICATION_ID content:content trigger:nil];
+    [center addNotificationRequest:request withCompletionHandler:^(NSError *error) {
+        if (error) GB_LOG(@"battery notification failed: %@", error);
+        else GB_LOG(@"battery notification: %@", content.body);
+    }];
+}
+
+static void PostBatteryNotification(NSString *name, GBBattery b) {
+    if (!ConfigBool(@"BatteryNotification", YES)) return;
+    UNUserNotificationCenter *center = AppNotificationCenter();
+    if (!center) return;
+    @try {
+        [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+            UNAuthorizationStatus status = settings.authorizationStatus;
+            if (status == UNAuthorizationStatusNotDetermined) {
+                GB_LOG(@"asking for notification permission for the app");
+                [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *error) {
+                    GB_LOG(@"notification permission %@%@", granted ? @"granted" : @"not granted",
+                           error ? [@": " stringByAppendingString:error.localizedDescription] : @"");
+                    if (granted) AddBatteryNotification(center, name, b);
+                }];
+            } else if (status == UNAuthorizationStatusDenied) {
+                GB_LOG(@"notifications are off for GalaxyBudsClient (Settings > Notifications)");
+            } else {
+                AddBatteryNotification(center, name, b);
+            }
+        }];
+    } @catch (NSException *e) { GB_LOG(@"battery notification failed: %@", e); }
+}
+
+static void RemoveBatteryNotification(void) {
+    UNUserNotificationCenter *center = AppNotificationCenter();
+    @try {
+        [center removeDeliveredNotificationsWithIdentifiers:@[GB_NOTIFICATION_ID]];
+        [center removePendingNotificationRequestsWithIdentifiers:@[GB_NOTIFICATION_ID]];
+    } @catch (NSException *e) { GB_LOG(@"removing the battery notification failed: %@", e); }
+}
+
 #pragma mark - Triggers
 
 static NSMutableDictionary<NSString *, NSDate *> *gLastShown;
 static dispatch_queue_t gQueue;
+static NSString *gConnectedName;        // the connected Buds (main queue), nil when none
+static NSDate *gLastRefresh;
+static dispatch_source_t gRefreshTimer;
 
 static BOOL AppIsFrontmost(void) {
     UIApplication *app = UIApplication.sharedApplication;
@@ -575,55 +689,127 @@ static BOOL AppIsFrontmost(void) {
     return [bundleID isEqualToString:GB_APP_BUNDLE_ID];
 }
 
-// Ask the daemon for the levels (it may have to open a short session to the Buds) and show the card
-static void FetchAndShow(NSString *name, BOOL force) {
+// Ask the daemon for the levels (it may have to open a short session to the Buds), then call done on the main queue
+static void FetchBattery(int attempts, void (^done)(GBBattery b)) {
     dispatch_async(gQueue, ^{
         GBBattery b;
         BOOL ok = NO;
-        for (int attempt = 0; attempt < 3 && !ok; attempt++) {
+        for (int attempt = 0; attempt < attempts && !ok; attempt++) {
             if (attempt) sleep(3);  // the Buds' Samsung service may not accept connections yet
             NSString *reply = DaemonRequest(@"BATTERY", NO);
             ok = ParseBattery(reply, &b);
             if (!ok) GB_LOG(@"BATTERY attempt %d: %@", attempt + 1, reply ?: @"no answer");
             if ([reply isEqualToString:@"ERR unknown command"]) { GB_LOG(@"update BudsBridge to 0.5.0 or newer"); return; }
         }
-        if (!ok) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            // The app shows its own card while it's open
-            if (!force && AppIsFrontmost()) { GB_LOG(@"the app is open, leaving the popup to it"); return; }
-            ShowCard(name, b);
-        });
+        if (ok) dispatch_async(dispatch_get_main_queue(), ^{ done(b); });
     });
+}
+
+// Refresh the notification while Buds are connected
+static void RefreshNotification(NSString *why) {
+    if (!gConnectedName || !ConfigBool(@"BatteryNotification", YES)) return;
+    gLastRefresh = [NSDate date];
+    NSString *name = gConnectedName;
+    GB_LOG(@"refreshing the battery notification (%@)", why);
+    FetchBattery(2, ^(GBBattery b) {
+        if ([gConnectedName isEqualToString:name]) PostBatteryNotification(name, b);
+    });
+}
+
+static void SetConnected(NSString *name) {
+    gConnectedName = name;
+    if (!gRefreshTimer) {
+        gRefreshTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        uint64_t interval = (uint64_t)(kNotificationRefreshSeconds * NSEC_PER_SEC);
+        dispatch_source_set_timer(gRefreshTimer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)interval), interval, 30 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(gRefreshTimer, ^{ RefreshNotification(@"every 10 minutes"); });
+        dispatch_resume(gRefreshTimer);
+    }
+}
+
+// Card and notification for a connection (or `budsrfcomm popup` when force is set)
+static void FetchAndShow(NSString *name, BOOL force) {
+    BOOL card = force || ConfigBool(@"Popup", YES);
+    if (!card && !(gConnectedName && ConfigBool(@"BatteryNotification", YES))) return;
+    gLastRefresh = [NSDate date];
+    FetchBattery(3, ^(GBBattery b) {
+        if (gConnectedName) PostBatteryNotification(gConnectedName, b);
+        if (!card) return;
+        // The app shows its own card while it's open
+        if (!force && AppIsFrontmost()) { GB_LOG(@"the app is open, leaving the popup to it"); return; }
+        ShowCard(name, b);
+    });
+}
+
+static NSString *DeviceName(NSNotification *n) {
+    id<GBBluetoothDevice> device = n.object;
+    return [device respondsToSelector:@selector(name)] ? device.name : nil;
 }
 
 static void OnConnected(NSNotification *n) {
     id<GBBluetoothDevice> device = n.object;
-    NSString *name = [device respondsToSelector:@selector(name)] ? device.name : nil;
+    NSString *name = DeviceName(n);
     NSString *address = [device respondsToSelector:@selector(address)] ? device.address : nil;
     GB_LOG(@"connected: %@ (%@)", name, address);
     if (!IsBuds(name)) return;
-    if (!ConfigBool(@"Popup", YES)) { GB_LOG(@"popup turned off (Popup = NO)"); return; }
     NSString *key = address ?: name;
     NSDate *last = gLastShown[key];
     if (last && -last.timeIntervalSinceNow < kRepeatSeconds) return;  // several profiles connect one after another
     gLastShown[key] = [NSDate date];
+    SetConnected(name);
+    if (!ConfigBool(@"Popup", YES)) GB_LOG(@"popup turned off (Popup = NO)");
     // Give the Buds a moment to bring up their Samsung service
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         FetchAndShow(name, NO);
     });
 }
 
+static void OnDisconnected(NSNotification *n) {
+    NSString *name = DeviceName(n);
+    if (!IsBuds(name) || ![name isEqualToString:gConnectedName]) return;
+    GB_LOG(@"disconnected: %@", name);
+    gConnectedName = nil;
+    RemoveBatteryNotification();
+}
+
+// iOS reports the Buds' battery over the hands-free profile now and then: a good moment to refresh
+static void OnBatteryChanged(NSNotification *n) {
+    NSString *name = DeviceName(n);
+    if (!IsBuds(name) || ![name isEqualToString:gConnectedName]) return;
+    if (gLastRefresh && -gLastRefresh.timeIntervalSinceNow < kMinRefreshSeconds) return;
+    RefreshNotification(@"battery changed");
+}
+
+// The connected Buds, from the daemon's LIST (blocking: call on gQueue)
+static NSString *ConnectedBudsName(void) {
+    NSString *list = DaemonRequest(@"LIST", YES);
+    for (NSString *line in [list componentsSeparatedByString:@"\n"]) {
+        NSArray<NSString *> *f = [line componentsSeparatedByString:@"\t"];
+        if (f.count >= 3 && [f[1] isEqualToString:@"1"] && IsBuds(f[2])) return f[2];
+    }
+    return nil;
+}
+
 // `budsrfcomm popup`: show the card for the connected Buds now
 static void OnShowRequest(void) {
     dispatch_async(gQueue, ^{
-        NSString *list = DaemonRequest(@"LIST", YES);
-        NSString *name = nil;
-        for (NSString *line in [list componentsSeparatedByString:@"\n"]) {
-            NSArray<NSString *> *f = [line componentsSeparatedByString:@"\t"];
-            if (f.count >= 3 && [f[1] isEqualToString:@"1"] && IsBuds(f[2])) { name = f[2]; break; }
-        }
+        NSString *name = ConnectedBudsName();
         GB_LOG(@"show requested (%@)", name ?: @"no connected Buds found");
         dispatch_async(dispatch_get_main_queue(), ^{ FetchAndShow(name ?: @"Galaxy Buds", YES); });
+    });
+}
+
+// After a respring the Buds may already be connected: no connect notification comes, so ask the daemon
+static void CheckAlreadyConnected(void) {
+    dispatch_async(gQueue, ^{
+        NSString *name = ConnectedBudsName();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!name) { RemoveBatteryNotification(); return; }
+            if (gConnectedName) return;
+            GB_LOG(@"already connected: %@", name);
+            SetConnected(name);
+            RefreshNotification(@"already connected");
+        });
     });
 }
 
@@ -634,6 +820,8 @@ __attribute__((constructor)) static void GBPopupInit(void) {
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
         NSOperationQueue *main = NSOperationQueue.mainQueue;
         [nc addObserverForName:kConnectNotification object:nil queue:main usingBlock:^(NSNotification *n) { OnConnected(n); }];
+        [nc addObserverForName:kDisconnectNotification object:nil queue:main usingBlock:^(NSNotification *n) { OnDisconnected(n); }];
+        [nc addObserverForName:kBatteryNotification object:nil queue:main usingBlock:^(NSNotification *n) { OnBatteryChanged(n); }];
         if (ConfigBool(@"PopupDebug", NO)) {
             [nc addObserverForName:nil object:nil queue:nil usingBlock:^(NSNotification *n) {
                 if ([n.name rangeOfString:@"Bluetooth" options:NSCaseInsensitiveSearch].location != NSNotFound)
@@ -642,6 +830,7 @@ __attribute__((constructor)) static void GBPopupInit(void) {
         }
         int token;
         notify_register_dispatch(GB_SHOW_NOTIFICATION, &token, dispatch_get_main_queue(), ^(int t) { OnShowRequest(); });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ CheckAlreadyConnected(); });
         GB_LOG(@"loaded");
     }
 }

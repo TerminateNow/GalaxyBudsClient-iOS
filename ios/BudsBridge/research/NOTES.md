@@ -242,3 +242,4 @@ on the iPhone 7 / 15.8.8, and this section updated with what's found:
   Center, lock screen; 8 would add a banner) and `interruptionLevel` 0 (passive). `BBAction actionWithLaunchBundleID:callblock:`
   is the default action. **Shows** in Notification Center on the iPhone 7. Tapping it cleared it, so the action's
   `shouldDismissBulletin` (exists on 15.8.8) is set to NO, and the tweak reposts it 3 s after opening the app from the card.
+  Verified: it stays after being tapped, and other apps' notifications (a Reminder) still arrive with the `BBServer` hook.

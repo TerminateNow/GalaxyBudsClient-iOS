@@ -102,9 +102,10 @@ Both are built on Linux or WSL2, without Xcode:
     `SBLockScreenManager unlockWithRequest:` when locked), hold keeps it up, hold-and-drag-down opens the app, swipes up, left or
     right dismiss it. `budsrfcomm popup` shows it on demand (Darwin notification). The package build copies the earbud photos from
     the app's `Resources/Device/Realistic` (`POPUP_IMAGES` in the Makefile). It also keeps a passive battery notification in the
-    app's name while Buds are connected (`UNUserNotificationCenter initWithBundleIdentifier:`); only the app can ask for the
-    permission, so `GalaxyBudsClient.iOS/AppDelegate.cs` asks at launch.
-    Verified on the iPhone 7 except the notification. Findings and private API details are in `research/NOTES.md`.
+    app's section while Buds are connected, published straight to BulletinBoard's `BBServer` (its initializers are swapped
+    at load to keep the server; `UNUserNotificationCenter initWithBundleIdentifier:` can't post for the app from SpringBoard).
+    Only the app can ask for the permission, so `GalaxyBudsClient.iOS/AppDelegate.cs` asks at launch.
+    All of it is verified on the iPhone 7, including that other apps' notifications still arrive. Findings and private API details are in `research/NOTES.md`.
     **An exception in this tweak crashes SpringBoard into safe mode:** keep UI work inside the `@try` wrappers and never put a
     possibly-nil object in a collection literal (that was the lock-screen crash).
   - **Settings:** `/var/jb/var/mobile/Library/Preferences/com.galaxybudsclient.budsrfcomm.plist` holds `Address` (the default device),
